@@ -1,0 +1,285 @@
+:root {
+  color-scheme: light;
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #1d4ed8;
+  --danger: #b91c1c;
+  --warning: #b45309;
+  --success: #15803d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 3rem;
+}
+
+header.app-header {
+  margin-bottom: 2rem;
+}
+
+header.app-header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.75rem;
+}
+
+header.app-header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.panel h2 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: center;
+}
+
+button.primary {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem 1.1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+
+button.ghost.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+label.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+.stat {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.stat strong {
+  display: block;
+  font-size: 1.35rem;
+}
+
+.stat span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.priority-section {
+  margin-bottom: 2rem;
+}
+
+.priority-section h2 {
+  font-size: 1.15rem;
+  margin-bottom: 0.75rem;
+}
+
+.finding-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.finding-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  margin-right: 0.4rem;
+}
+
+.badge.critical,
+.badge.high {
+  background: #fee2e2;
+  color: var(--danger);
+}
+
+.badge.medium {
+  background: #ffedd5;
+  color: var(--warning);
+}
+
+.badge.low {
+  background: #dcfce7;
+  color: var(--success);
+}
+
+.quote {
+  font-size: 0.88rem;
+  color: var(--muted);
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.error {
+  color: var(--danger);
+}
+
+.notice {
+  color: #1d4ed8;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.run-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.run-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.run-list li:last-child {
+  border-bottom: none;
+}
+
+.mode-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.mode-tabs button {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+}
+
+.mode-tabs button.active {
+  background: #dbeafe;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.upload-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.upload-field label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.upload-field input[type="file"],
+.upload-field select {
+  width: 100%;
+  max-width: 420px;
+}
+
+.file-list {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.reference-metadata {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-top: 0.75rem;
+}
+
+.reference-metadata-title {
+  margin: 0 0 0.75rem;
+  font-weight: 600;
+}
+
+.reference-metadata-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.reference-metadata-grid .upload-field label {
+  font-weight: 500;
+  font-size: 0.88rem;
+}
+
+.reference-metadata-grid input[type="date"],
+.reference-metadata-grid select {
+  width: 100%;
+}

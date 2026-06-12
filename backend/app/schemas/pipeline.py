@@ -22,3 +22,4 @@ class PipelineResult(BaseModel):
     correction_ui_response: CorrectionUIResponse
     run_lint_output: RunLintOutput | None = None
     debug: PipelineDebugContext | None = None
+    analysis_run_id: int | None = None

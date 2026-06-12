@@ -1,10 +1,6 @@
 """Full in-memory pipeline orchestration."""
 
-from backend.app.fixtures.mock_pipeline_outputs import (
-    MOCK_FACT_RESPONSES,
-    MOCK_SOURCE_INFERENCES,
-    MOCK_TARGET_RESPONSES,
-)
+from backend.app.config.settings import get_settings
 from backend.app.fixtures.sample_documents import (
     CLIENT_EMAIL_DOC_ID,
     CLIENT_EMAIL_TEXT,
@@ -15,8 +11,9 @@ from backend.app.fixtures.sample_documents import (
     TARGET_DOC_ID,
 )
 from backend.app.schemas.correction_ui import CorrectionTargetDocument
-from backend.app.schemas.enums import DocType, InferenceSource, SourceOrigin, SourceStatus
+from backend.app.schemas.enums import DocType, InferenceSource, SourceStatus
 from backend.app.schemas.fact_parser import ExtractProjectFactsInput, FactParserDocument
+from backend.app.schemas.lint import RunLintInput
 from backend.app.schemas.pipeline import PipelineDebugContext, PipelineResult
 from backend.app.schemas.source_profile import (
     ProfileSourceArgs,
@@ -24,14 +21,14 @@ from backend.app.schemas.source_profile import (
     SourceProfileInput,
 )
 from backend.app.schemas.target_parser import ParseTargetDocumentInput, TargetParserDocument
+from backend.app.schemas.upload import CustomLintRequest, build_reference_profile_input
 from backend.app.services.correction_ui import build_correction_ui_response_from_parts
 from backend.app.services.fact_clusterer import cluster_facts
 from backend.app.services.fact_parser import extract_project_facts
-from backend.app.services.llm_client import MockLLMClient, set_default_llm_client
 from backend.app.services.lint_engine.run_lint import run_lint
+from backend.app.services.llm_client import LLMClient, create_llm_client, set_default_llm_client
 from backend.app.services.source_profiler import profile_source
 from backend.app.services.target_parser import parse_target_document
-from backend.app.schemas.lint import RunLintInput
 
 
 async def run_reference_document_pipeline(
@@ -40,7 +37,7 @@ async def run_reference_document_pipeline(
     text: str,
     filename: str | None,
     profile_input: SourceProfileInput | None = None,
-    llm_client: MockLLMClient | None = None,
+    llm_client: LLMClient | None = None,
 ):
     args = ProfileSourceArgs(
         document=ProfileSourceDocument(id=document_id, text=text, filename=filename),
@@ -65,7 +62,7 @@ async def run_target_document_pipeline(
     target_doc_type: DocType,
     target_doc_type_source: InferenceSource = InferenceSource.USER,
     target_doc_type_confidence: float = 1.0,
-    llm_client: MockLLMClient | None = None,
+    llm_client: LLMClient | None = None,
 ):
     parse_input = ParseTargetDocumentInput(
         project_id=project_id,
@@ -77,15 +74,100 @@ async def run_target_document_pipeline(
     return await parse_target_document(parse_input, llm_client=llm_client)
 
 
+async def run_custom_pipeline(
+    request: CustomLintRequest,
+    *,
+    include_debug: bool = False,
+    llm_client: LLMClient | None = None,
+) -> PipelineResult:
+    if llm_client is None:
+        llm_client = create_llm_client(use_fixtures=False)
+    set_default_llm_client(llm_client)
+
+    project_id = request.project_id
+    target_id = request.target.resolved_id()
+
+    all_profiles = []
+    all_facts = []
+    extract_outputs = []
+
+    for reference in request.references:
+        ref_id = reference.resolved_id()
+        profile_input = build_reference_profile_input(ref_id, reference)
+
+        profile, extract_output, _ = await run_reference_document_pipeline(
+            project_id=project_id,
+            document_id=ref_id,
+            text=reference.text,
+            filename=reference.filename,
+            profile_input=profile_input,
+            llm_client=llm_client,
+        )
+        all_profiles.append(profile)
+        all_facts.extend(extract_output.facts)
+        extract_outputs.append(extract_output)
+
+    all_clusters = cluster_facts(all_facts)
+
+    target_parse = await run_target_document_pipeline(
+        project_id=project_id,
+        document_id=target_id,
+        text=request.target.text,
+        filename=request.target.filename,
+        target_doc_type=request.target_doc_type,
+        llm_client=llm_client,
+    )
+
+    lint_output = run_lint(
+        RunLintInput(
+            project_id=project_id,
+            target_parse_result=target_parse,
+            source_profiles=all_profiles,
+            project_facts=all_facts,
+            fact_clusters=all_clusters,
+        )
+    )
+
+    correction_response = build_correction_ui_response_from_parts(
+        project_id=project_id,
+        target_document=CorrectionTargetDocument(
+            id=target_id,
+            project_id=project_id,
+            filename=request.target.filename,
+            text=request.target.text,
+            doc_type=request.target_doc_type,
+        ),
+        target_parse_result=target_parse,
+        lint_output=lint_output,
+        source_profiles=all_profiles,
+    )
+
+    debug = None
+    if include_debug:
+        debug = PipelineDebugContext(
+            source_profiles=all_profiles,
+            extract_outputs=extract_outputs,
+            project_facts=all_facts,
+            fact_clusters=all_clusters,
+            target_parse_result=target_parse,
+            run_lint_output=lint_output,
+        )
+
+    return PipelineResult(
+        correction_ui_response=correction_response,
+        run_lint_output=lint_output,
+        debug=debug,
+    )
+
+
 async def run_full_pipeline(
     project_id: str = PROJECT_ID,
     include_debug: bool = False,
+    llm_client: LLMClient | None = None,
 ) -> PipelineResult:
-    llm_client = MockLLMClient(
-        source_inferences=MOCK_SOURCE_INFERENCES,
-        fact_responses=MOCK_FACT_RESPONSES,
-        target_responses=MOCK_TARGET_RESPONSES,
-    )
+    if llm_client is None:
+        settings = get_settings()
+        llm_client = create_llm_client(use_fixtures=not settings.use_openai)
     set_default_llm_client(llm_client)
 
     signed_profile, signed_extract, _ = await run_reference_document_pipeline(
