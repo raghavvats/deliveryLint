@@ -9,8 +9,17 @@ from backend.app.config.target_document_config import (
     TargetDocumentConfig,
 )
 from backend.app.domain.content import compute_missing_expected_content
-from backend.app.domain.normalization import fallback_normalized_subject
-from backend.app.schemas.enums import DocType, InferenceSource, TargetQualityFlag
+from backend.app.domain.normalization import (
+    fallback_normalized_subject,
+    is_out_of_scope_section,
+)
+from backend.app.schemas.enums import (
+    DocType,
+    FactPolarity,
+    FactType,
+    InferenceSource,
+    TargetQualityFlag,
+)
 from backend.app.schemas.target_document import TargetClaim, TargetProfile, TargetSection
 from backend.app.schemas.target_parser import (
     ParseTargetDocumentInput,
@@ -20,6 +29,40 @@ from backend.app.schemas.target_parser import (
     TargetParseWarningCode,
 )
 from backend.app.services.llm_client import LLMClient, get_default_llm_client
+
+# Claim types that describe committed/positive work and therefore must be flipped
+# to an exclusion when they appear under an out-of-scope section heading.
+_SCOPE_LIKE_CLAIM_TYPES = {
+    FactType.SCOPE_ITEM,
+    FactType.DELIVERABLE,
+    FactType.SYSTEM_OR_INTEGRATION,
+}
+
+
+def _apply_section_polarity(
+    *,
+    claim_type: FactType,
+    polarity: FactPolarity,
+    section_title: str | None,
+    allowed_claim_types: list[FactType],
+) -> tuple[FactType, FactPolarity]:
+    """Preserve claim polarity from section headings.
+
+    A claim parsed under an "Out of Scope" / "Exclusions" heading must not be
+    treated as included scope, even if the extractor labelled it positive. We flip
+    such scope-like claims to negative polarity and, where the document type allows
+    it, reclassify them as explicit out-of-scope items.
+    """
+    if not is_out_of_scope_section(section_title):
+        return claim_type, polarity
+    if claim_type not in _SCOPE_LIKE_CLAIM_TYPES:
+        return claim_type, polarity
+
+    new_polarity = FactPolarity.NEGATIVE
+    new_claim_type = claim_type
+    if claim_type == FactType.SCOPE_ITEM and FactType.OUT_OF_SCOPE_ITEM in allowed_claim_types:
+        new_claim_type = FactType.OUT_OF_SCOPE_ITEM
+    return new_claim_type, new_polarity
 
 
 def validate_and_enrich_target_parse(
@@ -154,16 +197,23 @@ def validate_and_enrich_target_parse(
         if not normalized_subject:
             normalized_subject = fallback_normalized_subject(candidate.subject)
 
+        claim_type, polarity = _apply_section_polarity(
+            claim_type=candidate.claim_type,
+            polarity=candidate.polarity,
+            section_title=candidate.location.section_title if candidate.location else None,
+            allowed_claim_types=config.target_claim_types,
+        )
+
         claims.append(
             TargetClaim(
                 id=f"claim_{uuid4().hex}",
                 project_id=project_id,
                 document_id=document_id,
-                claim_type=candidate.claim_type,
+                claim_type=claim_type,
                 text=candidate.text,
                 subject=candidate.subject,
                 normalized_subject=normalized_subject,
-                polarity=candidate.polarity,
+                polarity=polarity,
                 claim_status=candidate.claim_status,
                 attributes=candidate.attributes,
                 location=candidate.location,

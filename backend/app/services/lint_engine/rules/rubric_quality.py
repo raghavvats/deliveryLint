@@ -6,19 +6,30 @@ from backend.app.schemas.enums import DocType, FactType, LintFindingType, LintSe
 from backend.app.schemas.lint import LintContext, LintFinding
 from backend.app.services.lint_engine.matching import (
     contains_vague_language,
+    is_actionable_task,
+    mentions_explicit_owner,
     subjects_match,
     uat_test_has_expected_result,
 )
+
+# Claim types for which a missing owner is only meaningful if the item is an
+# actionable task rather than a passive assumption/dependency statement.
+_ACTIONABLE_REQUIRED_FOR_OWNER = {FactType.DEPENDENCY}
 
 
 def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
     findings: list[LintFinding] = []
     claims = context.target_claims
 
+    vague_checkable_types = {
+        FactType.REQUIREMENT,
+        FactType.DELIVERABLE,
+        FactType.SCOPE_ITEM,
+        FactType.ACCEPTANCE_CRITERIA,
+    }
+
     for claim in claims:
-        if claim.claim_type in {FactType.REQUIREMENT, FactType.DELIVERABLE} and contains_vague_language(
-            claim.text
-        ):
+        if claim.claim_type in vague_checkable_types and contains_vague_language(claim.text):
             findings.append(
                 LintFinding(
                     id=f"finding_{uuid4().hex}",
@@ -72,7 +83,15 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
             FactType.DEPENDENCY,
         }:
             owner = claim.attributes.owner if claim.attributes else None
-            if not owner:
+            owner_is_explicit_in_text = mentions_explicit_owner(claim.text)
+            needs_actionable = claim.claim_type in _ACTIONABLE_REQUIRED_FOR_OWNER
+            is_actionable = is_actionable_task(claim.text)
+            should_flag_missing_owner = (
+                not owner
+                and not owner_is_explicit_in_text
+                and not (needs_actionable and not is_actionable)
+            )
+            if should_flag_missing_owner:
                 findings.append(
                     LintFinding(
                         id=f"finding_{uuid4().hex}",

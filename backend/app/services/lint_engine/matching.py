@@ -1,5 +1,7 @@
 """Lint engine matching helpers."""
 
+import re
+
 from backend.app.schemas.enums import FactCategory, FactType
 from backend.app.schemas.project_fact import ProjectFact
 from backend.app.schemas.source_profile import SourceProfile
@@ -46,7 +48,31 @@ COMPATIBLE_REFERENCE_FACT_TYPES_BY_CLAIM_TYPE: dict[FactType, set[FactType]] = {
     FactType.DELIVERABLE: {
         FactType.DELIVERABLE,
         FactType.SCOPE_ITEM,
+        FactType.OUT_OF_SCOPE_ITEM,
         FactType.CHANGE_REQUEST,
+        FactType.DECISION,
+    },
+    FactType.DEPENDENCY: {
+        FactType.DEPENDENCY,
+        FactType.ASSUMPTION,
+        FactType.OUT_OF_SCOPE_ITEM,
+        FactType.SYSTEM_OR_INTEGRATION,
+        FactType.CLIENT_RESPONSIBILITY,
+        FactType.DECISION,
+    },
+    FactType.ASSUMPTION: {
+        FactType.ASSUMPTION,
+        FactType.DEPENDENCY,
+        FactType.OUT_OF_SCOPE_ITEM,
+        FactType.SCOPE_ITEM,
+        FactType.SYSTEM_OR_INTEGRATION,
+        FactType.DECISION,
+    },
+    FactType.SYSTEM_OR_INTEGRATION: {
+        FactType.SYSTEM_OR_INTEGRATION,
+        FactType.SCOPE_ITEM,
+        FactType.OUT_OF_SCOPE_ITEM,
+        FactType.DEPENDENCY,
         FactType.DECISION,
     },
     FactType.CLIENT_RESPONSIBILITY: {
@@ -88,6 +114,8 @@ VAGUE_TERMS = {
     "seamless",
     "robust",
     "user-friendly",
+    "user friendly",
+    "intuitive",
     "as needed",
     "etc.",
     "appropriate",
@@ -96,9 +124,123 @@ VAGUE_TERMS = {
     "improve",
 }
 
+# Generic tokens that do not help disambiguate one subject from another.
+# Removing them prevents over-matching on boilerplate words while keeping the
+# domain-specific anchor tokens (e.g. "netsuite", "portal", "uat") intact.
+SUBJECT_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "of",
+    "for",
+    "to",
+    "and",
+    "or",
+    "in",
+    "on",
+    "with",
+    "by",
+    "project",
+    "release",
+    "northstar",
+    "salesforce",
+    "system",
+    "systems",
+    "auctor",
+    "new",
+    "item",
+    "items",
+    "general",
+    "support",
+}
+
+# Minimum overlap-coefficient (|A ∩ B| / min(|A|, |B|)) required to treat two
+# normalized subjects as referring to the same thing.
+SUBJECT_MATCH_THRESHOLD = 0.5
+
+# Tokens that are too generic to anchor a *contradiction* or *exclusion* match.
+# Two subjects sharing only these words (e.g. "integration", "access") describe
+# different things and must not be treated as the same excluded capability or the
+# same responsibility. They remain usable for loose ``subjects_match`` grouping,
+# but a contradiction/exclusion additionally requires a shared *meaningful* term.
+GENERIC_MATCH_TERMS = {
+    "integration",
+    "integrations",
+    "access",
+    "testing",
+    "test",
+    "tests",
+    "support",
+    "system",
+    "systems",
+    "workflow",
+    "workflows",
+    "data",
+    "object",
+    "objects",
+    "configuration",
+    "management",
+    "service",
+    "services",
+}
+
+
+def subject_tokens(normalized_subject: str) -> set[str]:
+    tokens = {
+        token
+        for token in re.split(r"[^a-z0-9]+", normalized_subject.lower())
+        if token
+    }
+    significant = {token for token in tokens if token not in SUBJECT_STOPWORDS}
+    # Fall back to the raw tokens if stopword removal emptied the set so that very
+    # short subjects (e.g. "systems") can still match an identical counterpart.
+    return significant or tokens
+
 
 def subjects_match(a: str, b: str) -> bool:
-    return a == b
+    """Return True when two normalized subjects plausibly describe the same thing.
+
+    Subjects are produced by independent LLM extraction passes for the target and
+    the reference documents, so exact-string equality misses obvious matches such
+    as ``netsuite_billing_sync`` vs ``netsuite_billing_integration``. We therefore
+    compare significant-token sets using an overlap coefficient plus subset
+    detection.
+    """
+    if a == b:
+        return True
+
+    tokens_a = subject_tokens(a)
+    tokens_b = subject_tokens(b)
+    if not tokens_a or not tokens_b:
+        return False
+
+    shared = tokens_a & tokens_b
+    if not shared:
+        return False
+
+    # Subset relationship (e.g. "customer_portal" ⊂ "customer_portal_quote_acceptance").
+    if shared == tokens_a or shared == tokens_b:
+        return True
+
+    overlap_coefficient = len(shared) / min(len(tokens_a), len(tokens_b))
+    return overlap_coefficient >= SUBJECT_MATCH_THRESHOLD
+
+
+def meaningful_shared_tokens(a: str, b: str) -> set[str]:
+    """Significant tokens shared by two subjects, excluding generic boilerplate.
+
+    A bare overlap on words like ``integration`` or ``access`` is not enough to
+    conclude two subjects describe the same excluded capability or responsibility.
+    This returns only the domain-specific anchor tokens they share (e.g.
+    ``netsuite``, ``billing``, ``portal``, ``uat``).
+    """
+    shared = subject_tokens(a) & subject_tokens(b)
+    return shared - GENERIC_MATCH_TERMS
+
+
+def subjects_share_meaningful_term(a: str, b: str) -> bool:
+    """True when two subjects share at least one non-generic anchor token."""
+    return bool(meaningful_shared_tokens(a, b))
 
 
 def compatible_fact_types(claim_type: FactType, fact_type: FactType) -> bool:
@@ -136,6 +278,60 @@ def find_matching_facts(claim: TargetClaim, facts: list[ProjectFact]) -> list[Pr
 def contains_vague_language(text: str) -> bool:
     lowered = text.lower()
     return any(term in lowered for term in VAGUE_TERMS)
+
+
+# Owner names / named roles whose presence in a sentence means the owner is
+# explicit, so a "missing owner" finding would be a false positive.
+EXPLICIT_OWNER_TERMS = {
+    "auctor",
+    "northstar",
+    "client",
+    "vendor",
+    "project team",
+    "sponsor",
+    "engagement manager",
+    "administrator",
+    "admin",
+    "manager",
+    "lead",
+    "owner",
+    "sales operations",
+    "finance",
+    "stakeholder",
+}
+
+# Verbs indicating an actionable task (something a party is expected to do).
+# Kept deliberately unambiguous to avoid matching adjectives (e.g. "complete").
+ACTION_VERBS = {
+    "will",
+    "shall",
+    "must",
+    "provide",
+    "deliver",
+    "configure",
+    "execute",
+    "install",
+    "identify",
+    "review",
+    "approve",
+    "prepare",
+    "conduct",
+    "manage",
+    "perform",
+    "assign",
+    "verify",
+    "participate",
+}
+
+
+def mentions_explicit_owner(text: str) -> bool:
+    lowered = text.lower()
+    return any(term in lowered for term in EXPLICIT_OWNER_TERMS)
+
+
+def is_actionable_task(text: str) -> bool:
+    lowered = text.lower()
+    return any(re.search(rf"\b{re.escape(verb)}\b", lowered) for verb in ACTION_VERBS)
 
 
 def uat_test_has_expected_result(claim: TargetClaim) -> bool:
