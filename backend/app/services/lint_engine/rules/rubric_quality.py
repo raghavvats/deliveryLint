@@ -21,15 +21,12 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
     findings: list[LintFinding] = []
     claims = context.target_claims
 
-    vague_checkable_types = {
-        FactType.REQUIREMENT,
-        FactType.DELIVERABLE,
-        FactType.SCOPE_ITEM,
-        FactType.ACCEPTANCE_CRITERIA,
-    }
-
+    # Vague language is a quality problem in any checkable claim, not just scope /
+    # requirements. The curated VAGUE_TERMS list keeps this from being noisy, while
+    # checking every claim type ensures statements like "fast, user-friendly, and
+    # seamless" are caught regardless of how the extractor typed them.
     for claim in claims:
-        if claim.claim_type in vague_checkable_types and contains_vague_language(claim.text):
+        if claim.checkable and contains_vague_language(claim.text):
             findings.append(
                 LintFinding(
                     id=f"finding_{uuid4().hex}",
@@ -45,9 +42,6 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                     target_claim_id=claim.id,
                     target_location=claim.location,
                     target_quote=claim.location.quote,
-                    recommendation=(
-                        "Rewrite the requirement with measurable acceptance criteria."
-                    ),
                     rule_id="rubric.vague_requirement",
                 )
             )

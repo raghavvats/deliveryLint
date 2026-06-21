@@ -80,6 +80,24 @@ def test_customer_portal_prototype_deliverable_flagged_against_exclusions(norths
     assert LintFindingType.REFERENCE_CONTRADICTION in {f.finding_type for f in matches}
 
 
+def test_netsuite_billing_integration_design_deliverable_flagged(northstar_findings) -> None:
+    matches = _by_quote(northstar_findings, "NetSuite billing integration design")
+    assert matches, "Expected a finding for the NetSuite billing integration design deliverable"
+    assert LintFindingType.REFERENCE_CONTRADICTION in {f.finding_type for f in matches}
+    assert any(f.priority == ReviewPriority.NEEDS_FIX for f in matches)
+
+
+def test_weak_change_control_flagged(northstar_findings) -> None:
+    matches = _by_quote(northstar_findings, "active sprint backlog with agreement")
+    assert matches, "Expected a finding for weak change-control language"
+    contradiction = [
+        f for f in matches if f.finding_type == LintFindingType.REFERENCE_CONTRADICTION
+    ]
+    assert contradiction, "Weak change control should contradict the signed change-control rule"
+    assert any(f.rule_id == "contradiction.change_control_weakened" for f in contradiction)
+    assert any(f.priority == ReviewPriority.NEEDS_FIX for f in contradiction)
+
+
 def test_go_live_date_conflict_detected(northstar_findings) -> None:
     matches = _by_quote(northstar_findings, "production go-live targeted for August 15")
     assert matches
@@ -140,6 +158,38 @@ def test_unsupported_is_never_needs_fix(northstar_findings) -> None:
     for finding in northstar_findings:
         if finding.finding_type == LintFindingType.UNSUPPORTED_TARGET_CLAIM:
             assert finding.priority != ReviewPriority.NEEDS_FIX
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        "NetSuite billing sync for approved quotes",
+        "NetSuite billing integration design",
+        "Customer portal quote acceptance so distributors",
+        "Customer portal quote acceptance prototype",
+        "Define and execute all UAT test scripts",
+        "active sprint backlog with agreement",
+    ],
+)
+def test_explicit_exclusion_and_responsibility_snippets_are_contradictions(
+    northstar_findings, fragment
+) -> None:
+    """Each previously-missed snippet must produce a blocking contradiction.
+
+    These pass even though the fixtures emulate realistic extraction noise
+    (out-of-scope facts not labelled NEGATIVE, UAT owners not extracted as
+    attributes), proving recall does not depend on those fragile signals.
+    """
+    matches = _by_quote(northstar_findings, fragment)
+    assert matches, f"Expected a finding for '{fragment}'"
+    types = {f.finding_type for f in matches}
+    assert LintFindingType.REFERENCE_CONTRADICTION in types, (
+        f"'{fragment}' should be a contradiction, got {types}"
+    )
+    assert LintFindingType.UNSUPPORTED_TARGET_CLAIM not in types, (
+        f"'{fragment}' should not be a bare unsupported finding"
+    )
+    assert any(f.priority == ReviewPriority.NEEDS_FIX for f in matches)
 
 
 def test_seeded_issues_produce_blocking_findings(northstar_findings) -> None:

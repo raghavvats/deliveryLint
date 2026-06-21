@@ -27,6 +27,11 @@ def run_contradiction_rules(context: LintContext) -> list[LintFinding]:
             if claim.normalized_subject != cluster.normalized_subject:
                 continue
 
+            cluster_facts = [
+                fact
+                for fact in context.project_facts
+                if fact.id in cluster.fact_ids
+            ]
             findings.append(
                 LintFinding(
                     id=f"finding_{uuid4().hex}",
@@ -44,7 +49,11 @@ def run_contradiction_rules(context: LintContext) -> list[LintFinding]:
                     target_location=claim.location,
                     related_fact_ids=cluster.fact_ids,
                     related_fact_cluster_ids=[cluster.id],
+                    related_source_profile_ids=list(
+                        {fact.source_profile_id for fact in cluster_facts}
+                    ),
                     target_quote=claim.location.quote,
+                    reference_quotes=[fact.evidence.quote for fact in cluster_facts],
                     rule_id="contradiction.unresolved_reference_conflict",
                 )
             )

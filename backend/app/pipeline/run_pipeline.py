@@ -1,6 +1,7 @@
 """Full in-memory pipeline orchestration."""
 
 from backend.app.config.settings import get_settings
+from backend.app.db.models import ReferenceDocumentRecord, load_cached_reference_data
 from backend.app.fixtures.sample_documents import (
     CLIENT_EMAIL_DOC_ID,
     CLIENT_EMAIL_TEXT,
@@ -21,7 +22,7 @@ from backend.app.schemas.source_profile import (
     SourceProfileInput,
 )
 from backend.app.schemas.target_parser import ParseTargetDocumentInput, TargetParserDocument
-from backend.app.schemas.upload import CustomLintRequest, build_reference_profile_input
+from backend.app.schemas.upload import CustomLintRequest, UploadedDocument, build_reference_profile_input
 from backend.app.services.correction_ui import build_correction_ui_response_from_parts
 from backend.app.services.fact_clusterer import cluster_facts
 from backend.app.services.fact_parser import extract_project_facts
@@ -140,6 +141,13 @@ async def run_custom_pipeline(
         target_parse_result=target_parse,
         lint_output=lint_output,
         source_profiles=all_profiles,
+        project_facts=all_facts,
+        reference_text_by_document_id={
+            ref.resolved_id(): ref.text for ref in request.references
+        },
+        reference_filenames_by_document_id={
+            ref.resolved_id(): ref.filename for ref in request.references
+        },
     )
 
     debug = None
@@ -226,6 +234,15 @@ async def run_full_pipeline(
         target_parse_result=target_parse,
         lint_output=lint_output,
         source_profiles=all_profiles,
+        project_facts=all_facts,
+        reference_text_by_document_id={
+            SIGNED_SOW_DOC_ID: SIGNED_SOW_TEXT,
+            CLIENT_EMAIL_DOC_ID: CLIENT_EMAIL_TEXT,
+        },
+        reference_filenames_by_document_id={
+            SIGNED_SOW_DOC_ID: "signed_sow.txt",
+            CLIENT_EMAIL_DOC_ID: "client_email.txt",
+        },
     )
 
     debug = None
@@ -233,6 +250,92 @@ async def run_full_pipeline(
         debug = PipelineDebugContext(
             source_profiles=all_profiles,
             extract_outputs=[signed_extract, email_extract],
+            project_facts=all_facts,
+            fact_clusters=all_clusters,
+            target_parse_result=target_parse,
+            run_lint_output=lint_output,
+        )
+
+    return PipelineResult(
+        correction_ui_response=correction_response,
+        run_lint_output=lint_output,
+        debug=debug,
+    )
+
+
+async def run_target_against_cached_references(
+    *,
+    project_id: str,
+    target: UploadedDocument,
+    target_doc_type: DocType,
+    cached_references: list[ReferenceDocumentRecord],
+    include_debug: bool = False,
+    llm_client: LLMClient | None = None,
+) -> PipelineResult:
+    if llm_client is None:
+        llm_client = create_llm_client(use_fixtures=False)
+    set_default_llm_client(llm_client)
+
+    target_id = target.resolved_id()
+    all_profiles = []
+    all_facts = []
+
+    reference_text_by_document_id: dict[str, str] = {}
+    reference_filenames_by_document_id: dict[str, str | None] = {}
+
+    for ref_record in cached_references:
+        profile, facts = load_cached_reference_data(ref_record)
+        all_profiles.append(profile)
+        all_facts.extend(facts)
+        doc_id = ref_record.profile_document_id or profile.document_id
+        reference_text_by_document_id[doc_id] = ref_record.text
+        reference_text_by_document_id[profile.document_id] = ref_record.text
+        reference_filenames_by_document_id[doc_id] = ref_record.filename
+        reference_filenames_by_document_id[profile.document_id] = ref_record.filename
+
+    all_clusters = cluster_facts(all_facts)
+
+    target_parse = await run_target_document_pipeline(
+        project_id=project_id,
+        document_id=target_id,
+        text=target.text,
+        filename=target.filename,
+        target_doc_type=target_doc_type,
+        llm_client=llm_client,
+    )
+
+    lint_output = run_lint(
+        RunLintInput(
+            project_id=project_id,
+            target_parse_result=target_parse,
+            source_profiles=all_profiles,
+            project_facts=all_facts,
+            fact_clusters=all_clusters,
+        )
+    )
+
+    correction_response = build_correction_ui_response_from_parts(
+        project_id=project_id,
+        target_document=CorrectionTargetDocument(
+            id=target_id,
+            project_id=project_id,
+            filename=target.filename,
+            text=target.text,
+            doc_type=target_doc_type,
+        ),
+        target_parse_result=target_parse,
+        lint_output=lint_output,
+        source_profiles=all_profiles,
+        project_facts=all_facts,
+        reference_text_by_document_id=reference_text_by_document_id,
+        reference_filenames_by_document_id=reference_filenames_by_document_id,
+    )
+
+    debug = None
+    if include_debug:
+        debug = PipelineDebugContext(
+            source_profiles=all_profiles,
+            extract_outputs=[],
             project_facts=all_facts,
             fact_clusters=all_clusters,
             target_parse_result=target_parse,

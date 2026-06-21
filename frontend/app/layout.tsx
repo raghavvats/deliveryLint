@@ -1,5 +1,7 @@
 import "./globals.css";
 
+import { ToastHost } from "@/components/ui/toast-host";
+
 export const metadata = {
   title: "DeliveryLint",
   description: "Implementation document review assistant",
@@ -8,7 +10,9 @@ export const metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ToastHost>{children}</ToastHost>
+      </body>
     </html>
   );
 }

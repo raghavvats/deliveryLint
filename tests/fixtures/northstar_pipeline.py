@@ -180,7 +180,9 @@ MOCK_FACT_RESPONSES: dict[str, ProjectFactLLMResponse] = {
                 text="NetSuite billing integration, billing sync, invoice/order creation, and ERP posting are out of scope.",
                 subject="NetSuite billing integration",
                 normalized_subject="netsuite_billing_integration",
-                polarity=FactPolarity.NEGATIVE,
+                # Realistic extraction: "X is out of scope" is asserted positively,
+                # so the polarity label is not reliably NEGATIVE.
+                polarity=FactPolarity.NEUTRAL,
                 fact_status=FactStatus.SIGNED,
                 evidence=EvidenceSpan(
                     quote="NetSuite billing integration, billing sync, invoice creation, order creation, or ERP posting."
@@ -192,7 +194,7 @@ MOCK_FACT_RESPONSES: dict[str, ProjectFactLLMResponse] = {
                 text="Customer portal, distributor portal, and online quote acceptance are out of scope.",
                 subject="Customer portal online quote acceptance",
                 normalized_subject="customer_portal_online_quote_acceptance",
-                polarity=FactPolarity.NEGATIVE,
+                polarity=FactPolarity.POSITIVE,
                 fact_status=FactStatus.SIGNED,
                 evidence=EvidenceSpan(
                     quote="Customer portal, distributor portal, online quote acceptance, e-signature, or self-service ordering functionality."
@@ -204,7 +206,7 @@ MOCK_FACT_RESPONSES: dict[str, ProjectFactLLMResponse] = {
                 text="No NetSuite, ERP, billing, tax, portal, or middleware access is required for this release.",
                 subject="NetSuite access",
                 normalized_subject="netsuite_access",
-                polarity=FactPolarity.NEGATIVE,
+                polarity=FactPolarity.NEUTRAL,
                 fact_status=FactStatus.SIGNED,
                 evidence=EvidenceSpan(
                     quote="No NetSuite, ERP, billing, tax, portal, or middleware access is required for this first release."
@@ -233,7 +235,8 @@ MOCK_FACT_RESPONSES: dict[str, ProjectFactLLMResponse] = {
                 normalized_subject="uat_execution",
                 polarity=FactPolarity.POSITIVE,
                 fact_status=FactStatus.SIGNED,
-                attributes=ProjectFactAttributes(owner="Northstar"),
+                # Realistic extraction: owner attribute not populated; the party is
+                # only evident from the responsibility type and sentence text.
                 evidence=EvidenceSpan(
                     quote="Own and execute UAT test scripts with support from Auctor Systems."
                 ),
@@ -536,7 +539,6 @@ MOCK_TARGET_RESPONSES: dict[str, TargetDocumentLLMResponse] = {
                 normalized_subject="uat_test_script_execution",
                 polarity=FactPolarity.POSITIVE,
                 claim_status=FactStatus.PROPOSED,
-                attributes=ProjectFactAttributes(owner="Auctor Systems"),
                 location=_loc("Define and execute all UAT test scripts on behalf of Northstar business users."),
                 checkable=True,
                 extraction_confidence=0.92,
@@ -551,6 +553,18 @@ MOCK_TARGET_RESPONSES: dict[str, TargetDocumentLLMResponse] = {
                 claim_status=FactStatus.PROPOSED,
                 attributes=ProjectFactAttributes(owner="Northstar"),
                 location=_loc("Northstar will provide NetSuite sandbox access and API credentials by June 19, 2026."),
+                checkable=True,
+                extraction_confidence=0.9,
+            ),
+            # === Seeded issue: weak change control vs signed change-control rule ===
+            TargetClaimLLMOutput(
+                claim_type=FactType.CHANGE_REQUEST,
+                text="Items that can be accommodated may be incorporated into the active sprint backlog with agreement from the project team.",
+                subject="Change control via sprint backlog",
+                normalized_subject="change_control_sprint_backlog",
+                polarity=FactPolarity.POSITIVE,
+                claim_status=FactStatus.PROPOSED,
+                location=_loc("incorporated into the active sprint backlog with agreement from the project team"),
                 checkable=True,
                 extraction_confidence=0.9,
             ),

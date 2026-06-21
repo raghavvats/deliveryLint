@@ -46,8 +46,6 @@ class LintFinding(BaseModel):
     target_quote: str | None = None
     reference_quotes: list[str] = []
 
-    recommendation: str | None = None
-
     rule_id: str
 
 

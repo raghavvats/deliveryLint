@@ -68,7 +68,7 @@ def _normalize_owner(owner: str | None) -> str | None:
     if not owner:
         return None
     lowered = owner.lower()
-    if "auctor" in lowered:
+    if "auctor" in lowered or "vendor" in lowered:
         return "auctor"
     if "northstar" in lowered or "client" in lowered:
         return "northstar"
@@ -77,22 +77,48 @@ def _normalize_owner(owner: str | None) -> str | None:
     return lowered.strip() or None
 
 
+def _owner_from_text(text: str) -> str | None:
+    """Infer the responsible party from a sentence when no owner attribute exists.
+
+    Only returns a party when the sentence unambiguously names a single one. A
+    sentence that mentions both parties (e.g. "Auctor will execute on behalf of
+    Northstar") is ambiguous as to *ownership* and returns ``None`` so the caller
+    falls back to the responsibility-party type.
+    """
+    lowered = text.lower()
+    has_auctor = "auctor" in lowered or "vendor" in lowered
+    has_northstar = "northstar" in lowered or "client" in lowered
+    if has_auctor and not has_northstar:
+        return "auctor"
+    if has_northstar and not has_auctor:
+        return "northstar"
+    return None
+
+
+def _resolve_owner(claim_or_fact_owner: str | None, text: str) -> str | None:
+    return _normalize_owner(claim_or_fact_owner) or _owner_from_text(text)
+
+
 def _is_excluded_by_fact(claim: TargetClaim, fact: ProjectFact) -> bool:
     """Claim commits to something the references explicitly mark out of scope.
 
-    Requires a shared *meaningful* anchor term (e.g. ``netsuite``, ``portal``) so
-    that a claim merely sharing a generic word like ``integration`` or ``access``
-    with an exclusion is not flagged. For example "Salesforce Sales Cloud object
-    integration" must not match the "NetSuite billing integration" exclusion.
+    The exclusion signal is the reference ``fact_type`` being ``OUT_OF_SCOPE_ITEM``.
+    We deliberately do NOT require the fact's polarity to be ``NEGATIVE``: an
+    out-of-scope fact is an exclusion regardless of whether the extractor labelled
+    "X is out of scope" as positive, neutral, or negative, and depending on that
+    label was silently dropping real exclusions.
+
+    Precision is preserved by requiring a shared *meaningful* anchor term (e.g.
+    ``netsuite``, ``portal``) so a claim merely sharing a generic word like
+    ``integration`` or ``access`` with an exclusion is not flagged. For example
+    "Salesforce Sales Cloud object integration" must not match the "NetSuite
+    billing integration" exclusion.
     """
     if claim.polarity == FactPolarity.NEGATIVE:
         return False
     if claim.claim_type not in COMMITMENT_CLAIM_TYPES:
         return False
-    if not (
-        fact.fact_type == FactType.OUT_OF_SCOPE_ITEM
-        and fact.polarity == FactPolarity.NEGATIVE
-    ):
+    if fact.fact_type != FactType.OUT_OF_SCOPE_ITEM:
         return False
     return subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject)
 
@@ -123,24 +149,81 @@ def _is_date_conflict(claim: TargetClaim, fact: ProjectFact) -> bool:
 def _is_responsibility_conflict(claim: TargetClaim, fact: ProjectFact) -> bool:
     """Owner conflict on the *same* responsibility.
 
-    Both sides must name an owner, the owners must genuinely differ (and not be
-    joint), and the claim and fact must share a meaningful subject/action term.
-    The last condition prevents comparing unrelated responsibilities, e.g.
-    "Auctor will have access to a Salesforce admin" against "project management".
+    Precision gate first: the claim and fact must share a meaningful subject/action
+    term, which prevents comparing unrelated responsibilities (e.g. "Auctor will
+    have access to a Salesforce admin" against "project governance").
+
+    Recall: once the responsibilities are about the same thing, a conflict exists
+    when the owners differ. Owners are resolved from the ``owner`` attribute or,
+    when missing, inferred from the sentence text. If neither side yields a clear
+    owner we fall back to the responsibility-party *type* (a client responsibility
+    vs a team/vendor responsibility on the same subject) when the reference is
+    authoritative -- this is how an "Auctor executes UAT" claim conflicts with a
+    "Northstar owns UAT execution" signed fact even if owner attributes are absent.
     """
     if claim.claim_type not in RESPONSIBILITY_TYPES:
         return False
     if fact.fact_type not in RESPONSIBILITY_TYPES:
         return False
-    claim_owner = _normalize_owner(claim.attributes.owner if claim.attributes else None)
-    fact_owner = _normalize_owner(fact.attributes.owner if fact.attributes else None)
-    if not (claim_owner and fact_owner):
+    if not subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject):
         return False
-    if "joint" in {claim_owner, fact_owner}:
+
+    claim_owner = _resolve_owner(
+        claim.attributes.owner if claim.attributes else None, claim.text
+    )
+    fact_owner = _resolve_owner(
+        fact.attributes.owner if fact.attributes else None, fact.text
+    )
+    if claim_owner and fact_owner:
+        if "joint" in {claim_owner, fact_owner}:
+            return False
+        return claim_owner != fact_owner
+
+    # Owners not both resolvable: the responsibility-party type encodes which side
+    # owns the work (client vs team/vendor). Differing parties on the same subject
+    # is a conflict when the reference is signed/approved.
+    return claim.claim_type != fact.fact_type and fact.source_authority_level >= 4
+
+
+_CHANGE_CONTROL_FORMAL_TERMS = (
+    "signed",
+    "written change",
+    "change order",
+    "change request",
+    "executive sponsor",
+    "engagement manager",
+    "both parties",
+)
+_CHANGE_CONTROL_INFORMAL_TERMS = (
+    "backlog",
+    "sprint",
+    "project team",
+    "verbal",
+    "informal",
+    "email",
+    "agreement from",
+)
+
+
+def _is_change_control_weakening(claim: TargetClaim, fact: ProjectFact) -> bool:
+    """Target weakens change control versus a signed/approved change-control rule.
+
+    Fires when a change-control claim matches an authoritative change-control fact
+    on the same subject but permits informal incorporation (sprint backlog, project
+    team agreement) without the signed/written approval the reference requires.
+    """
+    if claim.claim_type != FactType.CHANGE_REQUEST:
         return False
-    if claim_owner == fact_owner:
+    if fact.fact_type != FactType.CHANGE_REQUEST:
         return False
-    return subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject)
+    if fact.fact_status not in APPROVED_STATUSES:
+        return False
+    if not subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject):
+        return False
+    claim_text = claim.text.lower()
+    has_informal = any(term in claim_text for term in _CHANGE_CONTROL_INFORMAL_TERMS)
+    has_formal = any(term in claim_text for term in _CHANGE_CONTROL_FORMAL_TERMS)
+    return has_informal and not has_formal
 
 
 def _related_cluster_ids(context: LintContext, fact: ProjectFact) -> list[str]:
@@ -156,7 +239,6 @@ def _contradiction_finding(
     fact: ProjectFact,
     title: str,
     message: str,
-    recommendation: str,
     rule_id: str,
     severity_floor: LintSeverity | None = None,
 ) -> LintFinding:
@@ -190,7 +272,6 @@ def _contradiction_finding(
         related_source_profile_ids=[fact.source_profile_id],
         target_quote=claim.location.quote,
         reference_quotes=[fact.evidence.quote],
-        recommendation=recommendation,
         rule_id=rule_id,
     )
 
@@ -220,7 +301,6 @@ def _unsupported_finding(context: LintContext, claim: TargetClaim) -> LintFindin
         target_claim_id=claim.id,
         target_location=claim.location,
         target_quote=claim.location.quote,
-        recommendation="Verify this claim against official scope sources before relying on it.",
         rule_id="grounding.unsupported_target_claim",
     )
 
@@ -246,10 +326,6 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
                 "The target document treats this item as in scope, but an authoritative "
                 "reference document explicitly lists it as out of scope / excluded."
             ),
-            recommendation=(
-                "Remove this item from committed scope or obtain a signed change order "
-                "before presenting it as included work."
-            ),
             rule_id="contradiction.target_includes_excluded_item",
             severity_floor=LintSeverity.HIGH,
         )
@@ -264,10 +340,6 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
             fact=fact,
             title="Target claim contradicts reference scope",
             message="The target document conflicts with a reference fact on the same subject.",
-            recommendation=(
-                "Resolve the conflict by aligning the target document with authoritative "
-                "reference sources or documenting an approved change."
-            ),
             rule_id="contradiction.scope_opposite_polarity",
         )
 
@@ -282,10 +354,6 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
             title="Target date conflicts with reference source",
             message=(
                 "The target document uses a date that conflicts with an authoritative reference."
-            ),
-            recommendation=(
-                "Align the date with the signed/approved reference or document an "
-                "approved change to the schedule."
             ),
             rule_id="contradiction.date_conflict",
         )
@@ -303,14 +371,27 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
                 "The target document assigns this responsibility to a different owner than "
                 "the authoritative reference documents do."
             ),
-            recommendation=(
-                "Reassign the responsibility to match the signed/approved reference, or "
-                "document an approved change of ownership."
-            ),
             rule_id="contradiction.responsibility_conflict",
         )
 
-    # Priority 5: informal / requested item presented as approved scope.
+    # Priority 5: change control weakened versus a signed/approved rule.
+    change_control_conflicts = [f for f in matches if _is_change_control_weakening(claim, f)]
+    if change_control_conflicts:
+        fact = _highest_authority_fact(change_control_conflicts)
+        return _contradiction_finding(
+            context=context,
+            claim=claim,
+            fact=fact,
+            title="Change-control language conflicts with signed process",
+            message=(
+                "The target document allows scope to change through informal agreement, "
+                "but an authoritative reference requires signed/written change control."
+            ),
+            rule_id="contradiction.change_control_weakened",
+            severity_floor=LintSeverity.HIGH,
+        )
+
+    # Priority 6: informal / requested item presented as approved scope.
     if claim.claim_type in COMMITMENT_CLAIM_TYPES:
         has_approving_support = any(
             f.fact_status in APPROVED_STATUSES
@@ -344,10 +425,6 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
                 related_source_profile_ids=list({f.source_profile_id for f in matches}),
                 target_quote=claim.location.quote,
                 reference_quotes=ref_quotes,
-                recommendation=(
-                    "Mark this as a pending change request, remove it from committed scope, "
-                    "or attach an approved change order."
-                ),
                 rule_id="authority.request_presented_as_scope",
             )
 

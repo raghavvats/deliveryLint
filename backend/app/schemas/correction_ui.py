@@ -12,8 +12,25 @@ from backend.app.schemas.fact_cluster import FactCluster
 from backend.app.schemas.lint import LintEngineWarning, RunLintOutput
 from backend.app.schemas.project_fact import ProjectFact
 from backend.app.schemas.source_profile import SourceProfile
+from backend.app.schemas.project_fact import EvidenceSpan
 from backend.app.schemas.target_document import TargetLocation, TargetProfile
 from backend.app.schemas.target_parser import TargetParseResult
+
+
+class CorrectionReferenceDocument(BaseModel):
+    document_id: str
+    filename: str | None = None
+    text: str
+    doc_type: DocType
+    source_profile_id: str
+
+
+class ReferenceEvidenceView(BaseModel):
+    fact_id: str
+    document_id: str
+    source_profile_id: str
+    quote: str
+    location: EvidenceSpan
 
 
 class CorrectionTargetDocument(BaseModel):
@@ -61,7 +78,6 @@ class CorrectionFindingView(BaseModel):
 
     title: str
     message: str
-    recommendation: str | None = None
 
     target_quote: str | None = None
     reference_quotes: list[str] = []
@@ -69,6 +85,7 @@ class CorrectionFindingView(BaseModel):
     target_location: TargetLocation | None = None
 
     related_source_summaries: list[CorrectionSourceSummary] = []
+    reference_evidence: list[ReferenceEvidenceView] = []
 
     rule_id: str
 
@@ -97,6 +114,8 @@ class CorrectionUIResponse(BaseModel):
     target_document: CorrectionTargetDocument
 
     target_profile: TargetProfile
+
+    reference_documents: list[CorrectionReferenceDocument] = []
 
     findings: list[CorrectionFindingView]
 

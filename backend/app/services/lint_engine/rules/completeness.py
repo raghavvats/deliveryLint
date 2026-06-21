@@ -28,10 +28,6 @@ def run_completeness_rules(context: LintContext) -> list[LintFinding]:
                     f"{category.value} content. That may reduce clarity or increase "
                     "delivery risk."
                 ),
-                recommendation=(
-                    f"Add content covering {category.value} that is normally expected "
-                    f"for a {profile.doc_type.value}."
-                ),
                 rule_id=f"completeness.missing_expected_content.{category.value}",
             )
         )

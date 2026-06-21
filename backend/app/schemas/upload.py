@@ -58,6 +58,7 @@ def build_reference_profile_input(
 
 class CustomLintRequest(BaseModel):
     project_id: str = Field(default_factory=lambda: f"project_{uuid4().hex[:8]}")
+    run_name: str | None = None
     target: UploadedDocument
     target_doc_type: DocType = DocType.DRAFT_SOW
     references: list[ReferenceUpload] = Field(default_factory=list)
