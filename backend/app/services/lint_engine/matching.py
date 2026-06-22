@@ -2,7 +2,7 @@
 
 import re
 
-from backend.app.schemas.enums import FactCategory, FactType
+from backend.app.schemas.enums import FactCategory, FactPolarity, FactType
 from backend.app.schemas.project_fact import ProjectFact
 from backend.app.schemas.source_profile import SourceProfile
 from backend.app.schemas.target_document import TargetClaim
@@ -27,6 +27,9 @@ COMPATIBLE_REFERENCE_FACT_TYPES_BY_CLAIM_TYPE: dict[FactType, set[FactType]] = {
         FactType.CLIENT_REQUEST,
         FactType.DECISION,
         FactType.OPEN_QUESTION,
+        FactType.OUT_OF_SCOPE_ITEM,
+        FactType.SCOPE_ITEM,
+        FactType.SYSTEM_OR_INTEGRATION,
     },
     FactType.ACCEPTANCE_CRITERIA: {
         FactType.ACCEPTANCE_CRITERIA,
@@ -111,6 +114,8 @@ REQUIRED_CATEGORIES_BY_CLAIM_TYPE: dict[FactType, set[FactCategory]] = {
 VAGUE_TERMS = {
     "fast",
     "easy",
+    "easily",
+    "quickly",
     "seamless",
     "robust",
     "user-friendly",
@@ -122,6 +127,12 @@ VAGUE_TERMS = {
     "reasonable",
     "optimize",
     "improve",
+    "straightforward",
+    "work properly",
+    "work efficiently",
+    "efficiently",
+    "simple and seamless",
+    "easier to manage",
 }
 
 # Generic tokens that do not help disambiguate one subject from another.
@@ -264,15 +275,80 @@ def has_reference_coverage_for_claim(
     return False
 
 
-def find_matching_facts(claim: TargetClaim, facts: list[ProjectFact]) -> list[ProjectFact]:
+def text_anchors_claim_to_fact(claim: TargetClaim, fact: ProjectFact) -> bool:
+    """True when claim text mentions domain terms from a reference fact.
+
+    Used as a fallback when LLM-produced ``normalized_subject`` strings differ
+    between target and reference extraction passes.
+    """
+    quote = claim.location.quote if claim.location else ""
+    claim_corpus = " ".join(
+        [
+            claim.text,
+            claim.subject,
+            claim.normalized_subject.replace("_", " "),
+            quote,
+        ]
+    ).lower()
+
+    fact_tokens = subject_tokens(fact.normalized_subject) | subject_tokens(fact.subject)
+    for word in re.findall(r"[a-z]{4,}", fact.evidence.quote.lower()):
+        fact_tokens.add(word)
+
+    meaningful = fact_tokens - GENERIC_MATCH_TERMS - SUBJECT_STOPWORDS
+    if not meaningful:
+        return False
+
+    hits = sum(1 for token in meaningful if token in claim_corpus)
+    required = 1 if len(meaningful) == 1 else min(2, len(meaningful))
+    return hits >= required
+
+
+def find_subject_or_text_matches(
+    claim: TargetClaim,
+    facts: list[ProjectFact],
+) -> list[ProjectFact]:
+    """Match facts by normalized subject or by text-anchor overlap."""
     matches: list[ProjectFact] = []
     for fact in facts:
-        if not subjects_match(claim.normalized_subject, fact.normalized_subject):
-            continue
         if not compatible_fact_types(claim.claim_type, fact.fact_type):
             continue
-        matches.append(fact)
+        if subjects_match(claim.normalized_subject, fact.normalized_subject):
+            matches.append(fact)
+        elif text_anchors_claim_to_fact(claim, fact):
+            matches.append(fact)
     return matches
+
+
+def find_matching_facts(claim: TargetClaim, facts: list[ProjectFact]) -> list[ProjectFact]:
+    return find_subject_or_text_matches(claim, facts)
+
+
+def find_exclusion_facts(claim: TargetClaim, facts: list[ProjectFact]) -> list[ProjectFact]:
+    """Find reference facts that exclude work the target claim commits to."""
+    if claim.polarity == FactPolarity.NEGATIVE:
+        return []
+    if claim.claim_type not in {
+        FactType.SCOPE_ITEM,
+        FactType.DELIVERABLE,
+        FactType.ACCEPTANCE_CRITERIA,
+        FactType.REQUIREMENT,
+        FactType.UAT_TEST,
+        FactType.SYSTEM_OR_INTEGRATION,
+        FactType.DEPENDENCY,
+        FactType.CHANGE_REQUEST,
+    }:
+        return []
+
+    excluded: list[ProjectFact] = []
+    for fact in facts:
+        if fact.fact_type != FactType.OUT_OF_SCOPE_ITEM:
+            continue
+        if subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject):
+            excluded.append(fact)
+        elif text_anchors_claim_to_fact(claim, fact):
+            excluded.append(fact)
+    return excluded
 
 
 def contains_vague_language(text: str) -> bool:

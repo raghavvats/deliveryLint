@@ -47,6 +47,15 @@ class AnalysisRunRecord(SQLModel, table=True):
     response_json: str | None = None
 
 
+class TestHarnessRunRecord(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    status: str = "completed"
+    llm_provider: str = "mock"
+    error_message: str | None = None
+    result_json: str | None = None
+
+
 def ensure_utc_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
@@ -692,3 +701,141 @@ def update_analysis_run_name(
         session.commit()
         session.refresh(record)
         return _to_run_summary(record)
+
+
+# --- Test harness runs ---
+
+
+def save_test_harness_run(
+    result_json: str,
+    *,
+    status: str = "completed",
+    llm_provider: str = "mock",
+    error_message: str | None = None,
+    database_url: str | None = None,
+) -> TestHarnessRunRecord:
+    init_db(database_url)
+    engine = get_engine(database_url)
+    record = TestHarnessRunRecord(
+        status=status,
+        llm_provider=llm_provider,
+        error_message=error_message,
+        result_json=result_json,
+    )
+    with Session(engine) as session:
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+    return record
+
+
+def create_processing_test_harness_run(
+    *,
+    llm_provider: str = "mock",
+    database_url: str | None = None,
+) -> TestHarnessRunRecord:
+    init_db(database_url)
+    engine = get_engine(database_url)
+    record = TestHarnessRunRecord(
+        status="running",
+        llm_provider=llm_provider,
+        result_json="{}",
+    )
+    with Session(engine) as session:
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+    return record
+
+
+def complete_test_harness_run(
+    run_id: int,
+    result_json: str,
+    *,
+    status: str = "completed",
+    error_message: str | None = None,
+    database_url: str | None = None,
+) -> TestHarnessRunRecord | None:
+    init_db(database_url)
+    engine = get_engine(database_url)
+    with Session(engine) as session:
+        record = session.get(TestHarnessRunRecord, run_id)
+        if record is None:
+            return None
+        record.status = status
+        record.result_json = result_json
+        record.error_message = error_message
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+    return record
+
+
+def fail_test_harness_run(
+    run_id: int,
+    error_message: str,
+    *,
+    database_url: str | None = None,
+) -> TestHarnessRunRecord | None:
+    return complete_test_harness_run(
+        run_id,
+        "{}",
+        status="failed",
+        error_message=error_message,
+        database_url=database_url,
+    )
+
+
+def list_test_harness_runs(
+    *,
+    limit: int = 50,
+    database_url: str | None = None,
+) -> list[TestHarnessRunRecord]:
+    init_db(database_url)
+    engine = get_engine(database_url)
+    with Session(engine) as session:
+        return list(
+            session.exec(
+                select(TestHarnessRunRecord)
+                .order_by(TestHarnessRunRecord.created_at.desc())
+                .limit(limit)
+            ).all()
+        )
+
+
+def get_test_harness_run_record(
+    run_id: int,
+    *,
+    database_url: str | None = None,
+) -> TestHarnessRunRecord | None:
+    init_db(database_url)
+    engine = get_engine(database_url)
+    with Session(engine) as session:
+        return session.get(TestHarnessRunRecord, run_id)
+
+
+def delete_test_harness_run(
+    run_id: int,
+    *,
+    database_url: str | None = None,
+) -> bool:
+    init_db(database_url)
+    engine = get_engine(database_url)
+    with Session(engine) as session:
+        record = session.get(TestHarnessRunRecord, run_id)
+        if record is None:
+            return False
+        session.delete(record)
+        session.commit()
+    return True
+
+
+def clear_test_harness_runs(database_url: str | None = None) -> int:
+    init_db(database_url)
+    engine = get_engine(database_url)
+    with Session(engine) as session:
+        records = session.exec(select(TestHarnessRunRecord)).all()
+        for record in records:
+            session.delete(record)
+        session.commit()
+    return len(records)

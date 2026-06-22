@@ -11,6 +11,7 @@ from backend.app.config.settings import get_settings
 from backend.app.db.models import init_db
 from backend.app.routes.analysis import router as analysis_router
 from backend.app.routes.projects import router as projects_router
+from backend.app.routes.test_harness import router as test_harness_router
 from backend.app.services.llm_client import LLMResponseError
 
 
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
 
     app.include_router(analysis_router)
     app.include_router(projects_router)
+    app.include_router(test_harness_router)
     return app
 
 

@@ -11,6 +11,8 @@ from uuid import uuid4
 
 from backend.app.schemas.enums import ClusterResolutionStatus, LintFindingType
 from backend.app.schemas.lint import LintContext, LintFinding
+from backend.app.services.lint_engine.finding_copy import unresolved_conflict_copy
+from backend.app.services.lint_engine.matching import text_anchors_claim_to_fact
 from backend.app.services.lint_engine.severity import severity_for_authority_contradiction
 
 
@@ -25,13 +27,19 @@ def run_contradiction_rules(context: LintContext) -> list[LintFinding]:
             if not claim.checkable:
                 continue
             if claim.normalized_subject != cluster.normalized_subject:
-                continue
+                if not any(
+                    text_anchors_claim_to_fact(claim, fact)
+                    for fact in context.project_facts
+                    if fact.id in cluster.fact_ids
+                ):
+                    continue
 
             cluster_facts = [
                 fact
                 for fact in context.project_facts
                 if fact.id in cluster.fact_ids
             ]
+            title, message = unresolved_conflict_copy(claim, cluster_facts)
             findings.append(
                 LintFinding(
                     id=f"finding_{uuid4().hex}",
@@ -40,11 +48,8 @@ def run_contradiction_rules(context: LintContext) -> list[LintFinding]:
                     finding_type=LintFindingType.UNRESOLVED_REFERENCE_CONFLICT,
                     severity=severity_for_authority_contradiction(3),
                     confidence=0.7,
-                    title="Unresolved reference conflict",
-                    message=(
-                        "Reference materials contain conflicting information on this subject, "
-                        "and the target document relies on one side of that conflict."
-                    ),
+                    title=title,
+                    message=message,
                     target_claim_id=claim.id,
                     target_location=claim.location,
                     related_fact_ids=cluster.fact_ids,

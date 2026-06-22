@@ -7,9 +7,10 @@ from backend.app.services.lint_engine.rules.claim_classification import (
 
 
 def test_owner_from_text_single_party() -> None:
-    assert _owner_from_text("Auctor Systems will configure the solution.") == "auctor"
-    assert _owner_from_text("Northstar will provide source data.") == "northstar"
-    assert _owner_from_text("The client will approve the design.") == "northstar"
+    assert _owner_from_text("Auctor Systems will configure the solution.") == "vendor"
+    assert _owner_from_text("Northstar will provide source data.") == "client"
+    assert _owner_from_text("Nimbus will execute UAT.") == "client"
+    assert _owner_from_text("The client will approve the design.") == "client"
 
 
 def test_owner_from_text_ambiguous_returns_none() -> None:
@@ -24,6 +25,6 @@ def test_owner_from_text_none_when_no_party() -> None:
 
 def test_resolve_owner_prefers_attribute() -> None:
     # Attribute wins even if the text is ambiguous.
-    assert _resolve_owner("Auctor Systems", "Auctor and Northstar collaborate.") == "auctor"
+    assert _resolve_owner("Auctor Systems", "Auctor and Northstar collaborate.") == "vendor"
     # Falls back to text when no attribute.
-    assert _resolve_owner(None, "Northstar will provide access.") == "northstar"
+    assert _resolve_owner(None, "Northstar will provide access.") == "client"

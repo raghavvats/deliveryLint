@@ -188,7 +188,7 @@ class OpenAILLMClient:
             f"{[category.value for category in FactCategory]}.\n"
             f"{user_hints}\n\n"
             f"JSON schema:\n{_schema_prompt(SourceProfileInference)}\n\n"
-            f"Document text:\n{args.document.text[:12000]}"
+            f"Document text:\n{args.document.text[:16000]}"
         )
         return await self._complete_json(prompt, SourceProfileInference)
 
@@ -199,13 +199,25 @@ class OpenAILLMClient:
     ) -> ProjectFactLLMResponse:
         prompt = (
             "Extract project facts from this reference document. "
-            "Each fact must include evidence.quote from the source text.\n"
+            "Each fact must include evidence.quote copied from the source text.\n"
+            "IMPORTANT extraction rules:\n"
+            "- Use normalized_subject as lowercase snake_case derived from the subject "
+            "(e.g. 'NetSuite billing sync' -> 'netsuite_billing_sync'). Reuse the same "
+            "normalized_subject when the same capability appears in multiple facts.\n"
+            "- Extract OUT_OF_SCOPE_ITEM facts for every explicitly excluded capability, "
+            "region, integration, or deliverable.\n"
+            "- For DATE facts, always populate attributes.date_value as YYYY-MM-DD when "
+            "a concrete date appears in the text.\n"
+            "- For responsibility facts, populate attributes.owner with the named party.\n"
+            "- For CLIENT_REQUEST facts from emails/meetings, use fact_status requested "
+            "or proposed — never approved unless explicitly signed off.\n"
+            "- Preserve requirement IDs (REQ-xxx), test IDs (UAT-xxx), and dollar thresholds.\n"
             f"Source profile doc_type: {input.source_profile.doc_type.value}\n"
             f"Allowed fact types: {[t.value for t in config.target_fact_types]}\n"
             f"Extraction guidance: {config.extraction_guidance}\n"
             f"Status guidance: {config.status_guidance}\n\n"
             f"JSON schema:\n{_schema_prompt(ProjectFactLLMResponse)}\n\n"
-            f"Document text:\n{input.document.text[:12000]}"
+            f"Document text:\n{input.document.text[:16000]}"
         )
         return await self._complete_json(prompt, ProjectFactLLMResponse)
 
@@ -216,13 +228,24 @@ class OpenAILLMClient:
     ) -> TargetDocumentLLMResponse:
         prompt = (
             "Parse this target document into sections and checkable claims. "
-            "Each claim must include location.quote from the target text.\n"
+            "Each checkable claim must include location.quote copied from the target text.\n"
+            "IMPORTANT parsing rules:\n"
+            "- Extract every scope item, requirement, date, responsibility, UAT test, "
+            "dependency, and change-control statement as a separate checkable claim.\n"
+            "- Use normalized_subject as lowercase snake_case aligned with how a SOW or "
+            "requirements doc would name the same item (e.g. 'uat_execution', "
+            "'production_go_live', 'sap_integration').\n"
+            "- For DATE claims, populate attributes.date_value as YYYY-MM-DD when present.\n"
+            "- For responsibility claims, populate attributes.owner and use "
+            "TEAM_RESPONSIBILITY for vendor/Auctor tasks and CLIENT_RESPONSIBILITY for client tasks.\n"
+            "- Preserve requirement IDs, test IDs, and numeric thresholds from the text.\n"
+            "- Mark claims under out-of-scope headings with negative polarity.\n"
             f"Target doc type: {input.target_doc_type.value}\n"
             f"Expected content categories: {[c.value for c in config.expected_content]}\n"
             f"Allowed claim types: {[t.value for t in config.target_claim_types]}\n"
             f"Parsing guidance: {config.parsing_guidance}\n"
             f"Rubric guidance: {config.rubric_guidance}\n\n"
             f"JSON schema:\n{_schema_prompt(TargetDocumentLLMResponse)}\n\n"
-            f"Document text:\n{input.document.text[:12000]}"
+            f"Document text:\n{input.document.text[:16000]}"
         )
         return await self._complete_json(prompt, TargetDocumentLLMResponse)

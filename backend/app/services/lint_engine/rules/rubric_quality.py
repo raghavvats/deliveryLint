@@ -4,6 +4,13 @@ from uuid import uuid4
 
 from backend.app.schemas.enums import DocType, FactType, LintFindingType, LintSeverity
 from backend.app.schemas.lint import LintContext, LintFinding
+from backend.app.services.lint_engine.finding_copy import (
+    missing_ac_copy,
+    missing_date_copy,
+    uat_coverage_gap_copy,
+    uat_missing_result_copy,
+    vague_requirement_copy,
+)
 from backend.app.services.lint_engine.matching import (
     contains_vague_language,
     is_actionable_task,
@@ -27,6 +34,7 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
     # seamless" are caught regardless of how the extractor typed them.
     for claim in claims:
         if claim.checkable and contains_vague_language(claim.text):
+            title, message = vague_requirement_copy(claim)
             findings.append(
                 LintFinding(
                     id=f"finding_{uuid4().hex}",
@@ -35,10 +43,8 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                     finding_type=LintFindingType.VAGUE_REQUIREMENT,
                     severity=LintSeverity.MEDIUM,
                     confidence=0.7,
-                    title="Vague requirement",
-                    message=(
-                        "This requirement uses vague language that may be difficult to test or verify."
-                    ),
+                    title=title,
+                    message=message,
                     target_claim_id=claim.id,
                     target_location=claim.location,
                     target_quote=claim.location.quote,
@@ -53,6 +59,7 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                 for c in claims
             )
             if not has_ac:
+                title, message = missing_ac_copy(claim)
                 findings.append(
                     LintFinding(
                         id=f"finding_{uuid4().hex}",
@@ -61,8 +68,8 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                         finding_type=LintFindingType.MISSING_ACCEPTANCE_CRITERIA,
                         severity=LintSeverity.MEDIUM,
                         confidence=0.65,
-                        title="Missing acceptance criteria",
-                        message="This requirement has no matching acceptance criteria claim.",
+                        title=title,
+                        message=message,
                         target_claim_id=claim.id,
                         target_location=claim.location,
                         target_quote=claim.location.quote,
@@ -106,6 +113,7 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
         if claim.claim_type == FactType.DATE:
             date_value = claim.attributes.date_value if claim.attributes else None
             if date_value is None:
+                title, message = missing_date_copy(claim)
                 findings.append(
                     LintFinding(
                         id=f"finding_{uuid4().hex}",
@@ -114,8 +122,8 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                         finding_type=LintFindingType.MISSING_DATE_VALUE,
                         severity=LintSeverity.MEDIUM,
                         confidence=0.85,
-                        title="Missing date value",
-                        message="This date-related claim lacks a concrete date value.",
+                        title=title,
+                        message=message,
                         target_claim_id=claim.id,
                         target_location=claim.location,
                         target_quote=claim.location.quote,
@@ -124,6 +132,7 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                 )
 
         if claim.claim_type == FactType.UAT_TEST and not uat_test_has_expected_result(claim):
+            title, message = uat_missing_result_copy(claim)
             findings.append(
                 LintFinding(
                     id=f"finding_{uuid4().hex}",
@@ -132,8 +141,8 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                     finding_type=LintFindingType.UAT_TEST_MISSING_EXPECTED_RESULT,
                     severity=LintSeverity.MEDIUM,
                     confidence=0.75,
-                    title="UAT test missing expected result",
-                    message="This UAT test claim does not include a clear expected result.",
+                    title=title,
+                    message=message,
                     target_claim_id=claim.id,
                     target_location=claim.location,
                     target_quote=claim.location.quote,
@@ -142,31 +151,33 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
             )
 
     if context.target_profile.doc_type == DocType.UAT_PLAN:
-        requirement_subjects = {
-            f.normalized_subject
+        requirement_facts = [
+            f
             for f in context.project_facts
             if f.fact_type == FactType.REQUIREMENT
-        }
-        uat_subjects = {
-            c.normalized_subject for c in claims if c.claim_type == FactType.UAT_TEST
-        }
-        for subject in requirement_subjects:
-            if subject not in uat_subjects:
-                findings.append(
-                    LintFinding(
-                        id=f"finding_{uuid4().hex}",
-                        project_id=context.project_id,
-                        target_document_id=context.target_profile.document_id,
-                        finding_type=LintFindingType.UAT_COVERAGE_GAP,
-                        severity=LintSeverity.LOW,
-                        confidence=0.55,
-                        title="UAT coverage gap",
-                        message=(
-                            f"Reference requirement '{subject}' has no matching UAT test "
-                            "by normalized subject."
-                        ),
-                        rule_id="rubric.uat_coverage_gap",
-                    )
+        ]
+        uat_claims = [c for c in claims if c.claim_type == FactType.UAT_TEST]
+        for req in requirement_facts:
+            covered = any(
+                subjects_match(req.normalized_subject, uat.normalized_subject)
+                for uat in uat_claims
+            )
+            if covered:
+                continue
+            req_id = req.attributes.requirement_id if req.attributes else None
+            title, message = uat_coverage_gap_copy(req.normalized_subject, req_id)
+            findings.append(
+                LintFinding(
+                    id=f"finding_{uuid4().hex}",
+                    project_id=context.project_id,
+                    target_document_id=context.target_profile.document_id,
+                    finding_type=LintFindingType.UAT_COVERAGE_GAP,
+                    severity=LintSeverity.LOW,
+                    confidence=0.55,
+                    title=title,
+                    message=message,
+                    rule_id="rubric.uat_coverage_gap",
                 )
+            )
 
     return findings

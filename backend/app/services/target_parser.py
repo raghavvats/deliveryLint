@@ -9,6 +9,7 @@ from backend.app.config.target_document_config import (
     TargetDocumentConfig,
 )
 from backend.app.domain.content import compute_missing_expected_content
+from backend.app.domain.attribute_enrichment import enrich_claim_attributes
 from backend.app.domain.normalization import (
     fallback_normalized_subject,
     is_out_of_scope_section,
@@ -205,21 +206,23 @@ def validate_and_enrich_target_parse(
         )
 
         claims.append(
-            TargetClaim(
-                id=f"claim_{uuid4().hex}",
-                project_id=project_id,
-                document_id=document_id,
-                claim_type=claim_type,
-                text=candidate.text,
-                subject=candidate.subject,
-                normalized_subject=normalized_subject,
-                polarity=polarity,
-                claim_status=candidate.claim_status,
-                attributes=candidate.attributes,
-                location=candidate.location,
-                checkable=candidate.checkable,
-                non_checkable_reason=candidate.non_checkable_reason,
-                extraction_confidence=candidate.extraction_confidence,
+            enrich_claim_attributes(
+                TargetClaim(
+                    id=f"claim_{uuid4().hex}",
+                    project_id=project_id,
+                    document_id=document_id,
+                    claim_type=claim_type,
+                    text=candidate.text,
+                    subject=candidate.subject,
+                    normalized_subject=normalized_subject,
+                    polarity=polarity,
+                    claim_status=candidate.claim_status,
+                    attributes=candidate.attributes,
+                    location=candidate.location,
+                    checkable=candidate.checkable,
+                    non_checkable_reason=candidate.non_checkable_reason,
+                    extraction_confidence=candidate.extraction_confidence,
+                )
             )
         )
 

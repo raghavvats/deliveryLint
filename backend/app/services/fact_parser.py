@@ -7,6 +7,7 @@ from backend.app.config.fact_extraction_config import (
     MIN_EXTRACTION_CONFIDENCE,
     FactExtractionConfig,
 )
+from backend.app.domain.attribute_enrichment import enrich_fact_attributes
 from backend.app.domain.normalization import fallback_normalized_subject
 from backend.app.schemas.enums import DocType
 from backend.app.schemas.fact_parser import (
@@ -88,23 +89,25 @@ def validate_and_enrich_project_facts(
             normalized_subject = fallback_normalized_subject(candidate.subject)
 
         facts.append(
-            ProjectFact(
-                id=f"fact_{uuid4().hex}",
-                project_id=project_id,
-                document_id=document_id,
-                source_profile_id=source_profile.id,
-                fact_type=candidate.fact_type,
-                text=candidate.text,
-                subject=candidate.subject,
-                normalized_subject=normalized_subject,
-                polarity=candidate.polarity,
-                fact_status=candidate.fact_status,
-                attributes=candidate.attributes,
-                evidence=candidate.evidence,
-                source_authority_level=source_profile.authority_level,
-                source_doc_type=source_profile.doc_type,
-                source_status=source_profile.status,
-                extraction_confidence=candidate.extraction_confidence,
+            enrich_fact_attributes(
+                ProjectFact(
+                    id=f"fact_{uuid4().hex}",
+                    project_id=project_id,
+                    document_id=document_id,
+                    source_profile_id=source_profile.id,
+                    fact_type=candidate.fact_type,
+                    text=candidate.text,
+                    subject=candidate.subject,
+                    normalized_subject=normalized_subject,
+                    polarity=candidate.polarity,
+                    fact_status=candidate.fact_status,
+                    attributes=candidate.attributes,
+                    evidence=candidate.evidence,
+                    source_authority_level=source_profile.authority_level,
+                    source_doc_type=source_profile.doc_type,
+                    source_status=source_profile.status,
+                    extraction_confidence=candidate.extraction_confidence,
+                )
             )
         )
 
