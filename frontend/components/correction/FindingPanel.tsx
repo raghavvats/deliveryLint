@@ -8,7 +8,9 @@ import { PRIORITY_LABELS } from "@/lib/types";
 type FindingPanelProps = {
   finding: CorrectionFindingView;
   referenceDocuments: CorrectionReferenceDocument[];
+  tracebackDocId: string | null;
   onTraceback: (documentId: string) => void;
+  onBackToTarget: () => void;
 };
 
 function severityVariant(severity: string): "destructive" | "warning" | "secondary" | "outline" {
@@ -21,7 +23,13 @@ function severityVariant(severity: string): "destructive" | "warning" | "seconda
   return "secondary";
 }
 
-export function FindingPanel({ finding, referenceDocuments, onTraceback }: FindingPanelProps) {
+export function FindingPanel({
+  finding,
+  referenceDocuments,
+  tracebackDocId,
+  onTraceback,
+  onBackToTarget,
+}: FindingPanelProps) {
   const filenameByDocId = Object.fromEntries(
     referenceDocuments.map((doc) => [doc.document_id, doc.filename ?? doc.document_id]),
   );
@@ -80,25 +88,38 @@ export function FindingPanel({ finding, referenceDocuments, onTraceback }: Findi
         <h2 className="text-lg font-semibold">{finding.title}</h2>
         <p className="mt-2 text-sm text-muted-foreground">{finding.message}</p>
       </div>
-      {tracebackEntries.length > 0 && (
+      {tracebackDocId ? (
         <div>
-          <p className="mb-2 text-sm font-medium">Reference traceback</p>
-          <div className="space-y-2">
-            {tracebackEntries.map((entry) => (
-              <Button
-                key={entry.key}
-                variant="outline"
-                className="h-auto w-full justify-start whitespace-normal px-3 py-2 text-left"
-                onClick={() => onTraceback(entry.documentId)}
-              >
-                <div>
-                  <p className="font-medium">{entry.label}</p>
-                  {entry.quote && <p className="text-xs text-muted-foreground">{entry.quote}</p>}
-                </div>
-              </Button>
-            ))}
-          </div>
+          <p className="mb-2 text-sm font-medium text-muted-foreground">
+            Viewing reference: {filenameByDocId[tracebackDocId] ?? tracebackDocId}
+          </p>
+          <Button variant="outline" size="sm" className="w-full" onClick={onBackToTarget}>
+            Back to target
+          </Button>
         </div>
+      ) : (
+        tracebackEntries.length > 0 && (
+          <div>
+            <p className="mb-2 text-sm font-medium">Reference traceback</p>
+            <div className="space-y-2">
+              {tracebackEntries.map((entry) => (
+                <Button
+                  key={entry.key}
+                  variant="outline"
+                  className="h-auto w-full justify-start whitespace-normal px-3 py-2 text-left"
+                  onClick={() => onTraceback(entry.documentId)}
+                >
+                  <div>
+                    <p className="font-medium">{entry.label}</p>
+                    {entry.quote && (
+                      <p className="text-xs text-muted-foreground">{entry.quote}</p>
+                    )}
+                  </div>
+                </Button>
+              ))}
+            </div>
+          </div>
+        )
       )}
     </aside>
   );

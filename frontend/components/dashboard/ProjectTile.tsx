@@ -365,7 +365,7 @@ export function ProjectTile({ project, onRefresh, onDeleted }: ProjectTileProps)
             <input
               ref={referenceInputRef}
               type="file"
-              accept=".txt,.md"
+              accept=".txt,.md,.pdf"
               multiple
               className="hidden"
               onChange={(event) => {
@@ -416,7 +416,7 @@ export function ProjectTile({ project, onRefresh, onDeleted }: ProjectTileProps)
               <input
                 ref={targetInputRef}
                 type="file"
-                accept=".txt,.md"
+                accept=".txt,.md,.pdf"
                 multiple
                 className="hidden"
                 onChange={(event) => {
@@ -430,7 +430,7 @@ export function ProjectTile({ project, onRefresh, onDeleted }: ProjectTileProps)
               <input
                 ref={rerunInputRef}
                 type="file"
-                accept=".txt,.md"
+                accept=".txt,.md,.pdf"
                 className="hidden"
                 onChange={(event) => {
                   const files = event.target.files;

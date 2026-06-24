@@ -126,6 +126,36 @@ body {
   padding: 0;
 }
 
+.document-viewer-markdown .markdown-table-wrapper {
+  overflow-x: auto;
+  margin: 0.75rem 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.document-viewer-markdown table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.875rem;
+}
+
+.document-viewer-markdown th,
+.document-viewer-markdown td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.document-viewer-markdown th {
+  background: var(--secondary);
+  font-weight: 600;
+}
+
+.document-viewer-markdown tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--secondary) 35%, transparent);
+}
+
 .document-viewer {
   white-space: pre-wrap;
   word-break: break-word;

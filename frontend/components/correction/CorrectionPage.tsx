@@ -204,7 +204,7 @@ export function CorrectionPage({ runId }: CorrectionPageProps) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-4 pr-[calc(1rem+380px)]">
+      <main className="mx-auto max-w-7xl px-4 py-4 pr-[calc(1rem+380px)]">
         <section className="min-h-[65vh]">
           {viewingReference ? (
             <div>
@@ -237,7 +237,9 @@ export function CorrectionPage({ runId }: CorrectionPageProps) {
         <FindingPanel
           finding={activeFinding}
           referenceDocuments={referenceDocuments}
+          tracebackDocId={tracebackDocId}
           onTraceback={(documentId) => setTracebackDocId(documentId)}
+          onBackToTarget={() => setTracebackDocId(null)}
         />
       </div>
 

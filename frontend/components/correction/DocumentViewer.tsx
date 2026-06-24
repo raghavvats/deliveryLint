@@ -17,13 +17,25 @@ type DocumentViewerProps = {
 };
 
 function isMarkdownFilename(filename?: string | null): boolean {
-  return Boolean(filename?.toLowerCase().endsWith(".md"));
+  const lower = filename?.toLowerCase() ?? "";
+  return lower.endsWith(".md") || lower.endsWith(".pdf");
 }
 
 function MarkdownChunk({ text }: { text: string }) {
   return (
     <div className="markdown-chunk">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          table: ({ children, ...props }) => (
+            <div className="markdown-table-wrapper">
+              <table {...props}>{children}</table>
+            </div>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   );
 }
