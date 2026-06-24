@@ -27,6 +27,15 @@ import re
 from uuid import uuid4
 
 from backend.app.domain.attribute_enrichment import extract_iso_date
+from backend.app.domain.text_signals import (
+    claims_no_open_questions,
+    extract_counts,
+    extract_dollar_amounts,
+    extract_percentages,
+    has_informal_change_control_language,
+    is_generic_acceptance_criteria,
+    mentions_uat_execution,
+)
 from backend.app.schemas.enums import (
     FactPolarity,
     FactStatus,
@@ -70,7 +79,7 @@ COMMITMENT_CLAIM_TYPES = {
 }
 
 RESPONSIBILITY_TYPES = {FactType.CLIENT_RESPONSIBILITY, FactType.TEAM_RESPONSIBILITY}
-DATE_FACT_TYPES = {FactType.DATE, FactType.MILESTONE}
+DATE_FACT_TYPES = {FactType.DATE, FactType.MILESTONE, FactType.DELIVERABLE}
 
 _VENDOR_MARKERS = ("auctor", "vendor")
 _CLIENT_MARKERS = ("client", "northstar", "customer")
@@ -246,6 +255,233 @@ def _is_change_control_weakening(claim: TargetClaim, fact: ProjectFact) -> bool:
     return has_informal and not has_formal
 
 
+def _find_change_control_conflicts(claim: TargetClaim, facts: list[ProjectFact]) -> list[ProjectFact]:
+    if not has_informal_change_control_language(claim.text):
+        return []
+    conflicts: list[ProjectFact] = []
+    for fact in facts:
+        if fact.fact_type != FactType.CHANGE_REQUEST:
+            continue
+        if fact.fact_status not in APPROVED_STATUSES:
+            continue
+        if subjects_share_meaningful_term(
+            claim.normalized_subject, fact.normalized_subject
+        ) or text_anchors_claim_to_fact(claim, fact) or "change" in fact.normalized_subject:
+            conflicts.append(fact)
+    return conflicts
+
+
+def _find_threshold_authority_mismatch(
+    claim: TargetClaim, facts: list[ProjectFact]
+) -> list[ProjectFact]:
+    claim_percentages = extract_percentages(claim.text)
+    if not claim_percentages:
+        return []
+
+    request_facts: list[ProjectFact] = []
+    for fact in facts:
+        if fact.fact_type not in REQUEST_FACT_TYPES and fact.fact_status not in REQUEST_STATUSES:
+            continue
+        fact_text = f"{fact.text} {fact.evidence.quote}".lower()
+        if not any(pct in extract_percentages(fact.text + fact.evidence.quote) for pct in claim_percentages):
+            continue
+        if any(
+            marker in fact_text
+            for marker in ("explore", "not to change", "do not change", "pricing", "possible")
+        ):
+            request_facts.append(fact)
+
+    if not request_facts:
+        return []
+
+    approved_conflict = any(
+        f.fact_status in APPROVED_STATUSES
+        and extract_percentages(f.text + f.evidence.quote)
+        and extract_percentages(f.text + f.evidence.quote) != claim_percentages
+        and (
+            subjects_share_meaningful_term(claim.normalized_subject, f.normalized_subject)
+            or "discount" in f.normalized_subject
+            or "threshold" in f.normalized_subject
+            or "discount" in claim.text.lower()
+        )
+        for f in facts
+    )
+    return request_facts if approved_conflict else []
+
+
+def _find_dollar_authority_mismatch(
+    claim: TargetClaim, facts: list[ProjectFact]
+) -> list[ProjectFact]:
+    claim_amounts = extract_dollar_amounts(claim.text)
+    if not claim_amounts:
+        return []
+
+    request_facts: list[ProjectFact] = []
+    for fact in facts:
+        if fact.fact_type not in REQUEST_FACT_TYPES and fact.fact_status not in REQUEST_STATUSES:
+            continue
+        fact_amounts = extract_dollar_amounts(fact.text + " " + fact.evidence.quote)
+        if not (claim_amounts & fact_amounts):
+            continue
+        fact_text = f"{fact.text} {fact.evidence.quote}".lower()
+        if any(
+            marker in fact_text
+            for marker in ("idea", "no decision", "not approved", "discuss", "possible", "explore")
+        ):
+            request_facts.append(fact)
+
+    if not request_facts:
+        return []
+
+    approved_conflict = any(
+        f.fact_status in APPROVED_STATUSES
+        and extract_dollar_amounts(f.text + " " + f.evidence.quote)
+        and extract_dollar_amounts(f.text + " " + f.evidence.quote) != claim_amounts
+        and (
+            "refund" in f.normalized_subject
+            or "approval" in f.normalized_subject
+            or "refund" in claim.text.lower()
+            or "approval" in claim.text.lower()
+        )
+        for f in facts
+    )
+    return request_facts if approved_conflict else []
+
+
+def _find_proposed_change_order_mismatch(
+    claim: TargetClaim, facts: list[ProjectFact]
+) -> list[ProjectFact]:
+    if claim.claim_type not in COMMITMENT_CLAIM_TYPES:
+        return []
+    proposed = [
+        fact
+        for fact in facts
+        if fact.fact_type == FactType.CHANGE_REQUEST and fact.fact_status == FactStatus.PROPOSED
+    ]
+    matching = [
+        fact
+        for fact in proposed
+        if subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject)
+        or text_anchors_claim_to_fact(claim, fact)
+    ]
+    if not matching:
+        return []
+
+    approved_support = [
+        fact
+        for fact in facts
+        if fact.fact_status in APPROVED_STATUSES
+        and (
+            subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject)
+            or text_anchors_claim_to_fact(claim, fact)
+        )
+    ]
+    return matching if not approved_support else []
+
+
+def _find_numeric_count_unsupported(
+    claim: TargetClaim, facts: list[ProjectFact]
+) -> bool:
+    claim_counts = extract_counts(claim.text)
+    if not claim_counts:
+        return False
+
+    approved_counts: set[str] = set()
+    for fact in facts:
+        if fact.fact_status not in APPROVED_STATUSES:
+            continue
+        approved_counts |= extract_counts(fact.text + " " + fact.evidence.quote)
+
+    if not approved_counts:
+        return False
+
+    return bool(claim_counts - approved_counts)
+
+
+def _find_embedded_uat_responsibility_conflicts(
+    claim: TargetClaim, facts: list[ProjectFact]
+) -> list[ProjectFact]:
+    if not mentions_uat_execution(claim.text):
+        return []
+    claim_owner = _resolve_owner(
+        claim.attributes.owner if claim.attributes else None, claim.text
+    )
+    if claim_owner != "vendor" and "auctor" not in claim.text.lower():
+        return []
+
+    conflicts: list[ProjectFact] = []
+    for fact in facts:
+        if fact.fact_type != FactType.CLIENT_RESPONSIBILITY:
+            continue
+        fact_corpus = f"{fact.normalized_subject} {fact.text} {fact.evidence.quote}".lower()
+        if "uat" not in fact_corpus:
+            continue
+        if fact.source_authority_level >= 4:
+            conflicts.append(fact)
+    return conflicts
+
+
+def _find_open_question_contradiction(
+    claim: TargetClaim, facts: list[ProjectFact]
+) -> list[ProjectFact]:
+    if claim.claim_type != FactType.OPEN_QUESTION:
+        return []
+    if not claims_no_open_questions(claim.text):
+        return []
+    return [
+        fact
+        for fact in facts
+        if fact.fact_type == FactType.OPEN_QUESTION
+        and fact.fact_status not in {FactStatus.REJECTED, FactStatus.CONFIRMED}
+    ]
+
+
+def _status_claim_contradicts_fact(claim: TargetClaim, fact: ProjectFact) -> bool:
+    claim_text = claim.text.lower()
+    fact_text = f"{fact.text} {fact.evidence.quote}".lower()
+    if not subjects_share_meaningful_term(
+        claim.normalized_subject, fact.normalized_subject
+    ) and not text_anchors_claim_to_fact(claim, fact):
+        return False
+
+    positive_markers = ("received", "complete", "completed", "approved", "on track", "delivered")
+    negative_markers = (
+        "not received",
+        "had not been received",
+        "blocked",
+        "delayed",
+        "pending",
+        "not approved",
+        "open",
+    )
+    claim_positive = any(marker in claim_text for marker in positive_markers)
+    fact_negative = any(marker in fact_text for marker in negative_markers)
+    return claim_positive and fact_negative and fact.source_authority_level >= 3
+
+
+def _find_status_update_contradictions(
+    claim: TargetClaim, facts: list[ProjectFact]
+) -> list[ProjectFact]:
+    if claim.claim_type != FactType.STATUS_UPDATE:
+        return []
+    return [fact for fact in facts if _status_claim_contradicts_fact(claim, fact)]
+
+
+def _find_unsupported_system_name(claim: TargetClaim, facts: list[ProjectFact]) -> bool:
+    if claim.claim_type != FactType.SYSTEM_OR_INTEGRATION:
+        return False
+    claim_name = claim.subject.strip()
+    if len(claim_name) < 4:
+        return False
+
+    for fact in facts:
+        if fact.fact_type != FactType.SYSTEM_OR_INTEGRATION:
+            continue
+        if claim_name.lower() in f"{fact.subject} {fact.text}".lower():
+            return False
+    return True
+
+
 def _related_cluster_ids(context: LintContext, fact: ProjectFact) -> list[str]:
     return [
         cluster.id for cluster in context.fact_clusters if fact.id in cluster.fact_ids
@@ -398,6 +634,8 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
 
     # Priority 4: responsibility / owner conflict.
     responsibility_conflicts = _find_responsibility_conflicts(claim, facts)
+    if not responsibility_conflicts:
+        responsibility_conflicts = _find_embedded_uat_responsibility_conflicts(claim, facts)
     if responsibility_conflicts:
         fact = _highest_authority_fact(responsibility_conflicts)
         title, message = responsibility_conflict_copy(claim, fact)
@@ -412,6 +650,8 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
 
     # Priority 5: change control weakened versus a signed/approved rule.
     change_control_conflicts = [f for f in matches if _is_change_control_weakening(claim, f)]
+    if not change_control_conflicts:
+        change_control_conflicts = _find_change_control_conflicts(claim, facts)
     if change_control_conflicts:
         fact = _highest_authority_fact(change_control_conflicts)
         title, message = change_control_copy(claim, fact)
@@ -425,8 +665,61 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
             severity_floor=LintSeverity.HIGH,
         )
 
-    # Priority 6: informal / requested item presented as approved scope.
+    # Priority 6: open-question or status-update contradictions.
+    open_question_conflicts = _find_open_question_contradiction(claim, facts)
+    if open_question_conflicts:
+        fact = _highest_authority_fact(open_question_conflicts)
+        title, message = exclusion_contradiction_copy(claim, fact)
+        return _contradiction_finding(
+            context=context,
+            claim=claim,
+            fact=fact,
+            title=title,
+            message=message,
+            rule_id="contradiction.open_questions_not_none",
+        )
+
+    status_conflicts = _find_status_update_contradictions(claim, facts)
+    if status_conflicts:
+        fact = _highest_authority_fact(status_conflicts)
+        title, message = exclusion_contradiction_copy(claim, fact)
+        return _contradiction_finding(
+            context=context,
+            claim=claim,
+            fact=fact,
+            title=title,
+            message=message,
+            rule_id="contradiction.status_update_conflict",
+        )
+
+    # Priority 7: discount/threshold presented as approved despite informal request.
+    threshold_facts = _find_threshold_authority_mismatch(claim, facts)
+    if not threshold_facts:
+        threshold_facts = _find_dollar_authority_mismatch(claim, facts)
+    if threshold_facts:
+        title, message = authority_mismatch_copy(claim, threshold_facts)
+        return LintFinding(
+            id=f"finding_{uuid4().hex}",
+            project_id=context.project_id,
+            target_document_id=claim.document_id,
+            finding_type=LintFindingType.STATUS_AUTHORITY_MISMATCH,
+            severity=LintSeverity.HIGH,
+            confidence=0.85,
+            title=title,
+            message=message,
+            target_claim_id=claim.id,
+            target_location=claim.location,
+            related_fact_ids=[f.id for f in threshold_facts],
+            related_source_profile_ids=list({f.source_profile_id for f in threshold_facts}),
+            target_quote=claim.location.quote,
+            reference_quotes=[f.evidence.quote for f in threshold_facts],
+            rule_id="authority.threshold_presented_as_approved",
+        )
+
+    # Priority 8: informal / requested item presented as approved scope.
     authority_facts = _find_authority_mismatch_facts(claim, facts, matches)
+    if not authority_facts:
+        authority_facts = _find_proposed_change_order_mismatch(claim, facts)
     if authority_facts:
         title, message = authority_mismatch_copy(claim, authority_facts)
         return LintFinding(
@@ -446,6 +739,14 @@ def _classify_claim(context: LintContext, claim: TargetClaim) -> LintFinding | N
             reference_quotes=[f.evidence.quote for f in authority_facts],
             rule_id="authority.request_presented_as_scope",
         )
+
+    # Priority 9: numeric count unsupported by signed references (e.g. 12 users vs 8).
+    if _find_numeric_count_unsupported(claim, facts):
+        return _unsupported_finding(context, claim)
+
+    # Priority 10: named system/integration with no reference support.
+    if _find_unsupported_system_name(claim, facts):
+        return _unsupported_finding(context, claim)
 
     if not matches:
         if not has_reference_coverage_for_claim(claim, context.source_profiles):

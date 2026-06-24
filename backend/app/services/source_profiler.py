@@ -164,6 +164,37 @@ def build_mock_inference(args: ProfileSourceArgs) -> SourceProfileInference:
     )
 
 
+def build_inference_from_hints(args: ProfileSourceArgs) -> SourceProfileInference:
+    """Build a profile inference from user hints and lightweight text signals."""
+    assert args.input is not None
+    doc_type = args.input.user_provided_doc_type or DocType.UNKNOWN
+    observed = infer_observed_content_from_text(args.document.text)
+    expected = get_expected_content(doc_type)
+    if not observed:
+        observed = list(expected)
+    status = args.input.user_provided_status or SourceStatus.UNKNOWN
+    return SourceProfileInference(
+        inferred_doc_type=doc_type,
+        doc_type_confidence=1.0,
+        inferred_origin=args.input.user_provided_origin or SourceOrigin.UNKNOWN,
+        origin_confidence=1.0 if args.input.user_provided_origin else 0.5,
+        inferred_status=status,
+        status_confidence=1.0 if args.input.user_provided_status else 0.5,
+        observed_content=observed,
+        reliability_flags=[],
+        summary=f"Heuristic profile for {doc_type.value} document.",
+    )
+
+
+def can_skip_llm_profile(args: ProfileSourceArgs) -> bool:
+    if args.input is None:
+        return False
+    return (
+        args.input.user_provided_doc_type is not None
+        and args.input.user_provided_status is not None
+    )
+
+
 async def profile_source(
     args: ProfileSourceArgs,
     llm_client: LLMClient | None = None,
@@ -171,6 +202,8 @@ async def profile_source(
 ) -> SourceProfile:
     if use_mock_inference:
         inference = build_mock_inference(args)
+    elif can_skip_llm_profile(args):
+        inference = build_inference_from_hints(args)
     else:
         inference = await infer_source_profile(args, llm_client=llm_client)
 

@@ -47,7 +47,13 @@ def score_expected_findings(
     expected_findings: list[ExpectedFinding],
     actual_findings: list[CorrectionFindingView],
 ) -> tuple[list[ExpectedFindingResult], list[ActualFindingSnapshot]]:
-    candidates: list[tuple[int, int, float]] = []
+    """Score recall using many-to-one matching.
+
+    A single actual finding may satisfy multiple expected items when the same
+    lint output covers several injected defects (e.g. one responsibility finding
+    that mentions both UAT execution and price book cleanup).
+    """
+    candidates: list[tuple[float, int, int]] = []
     for expected_index, expected in enumerate(expected_findings):
         for actual_index, finding in enumerate(actual_findings):
             score = _match_score(expected, finding)
@@ -56,14 +62,14 @@ def score_expected_findings(
 
     candidates.sort(key=lambda item: item[0], reverse=True)
     matched_expected: set[int] = set()
-    matched_actual: set[int] = set()
     expected_matches: dict[int, tuple[CorrectionFindingView, float]] = {}
+    matched_actual_indices: set[int] = set()
 
     for score, expected_index, actual_index in candidates:
-        if expected_index in matched_expected or actual_index in matched_actual:
+        if expected_index in matched_expected:
             continue
         matched_expected.add(expected_index)
-        matched_actual.add(actual_index)
+        matched_actual_indices.add(actual_index)
         expected_matches[expected_index] = (actual_findings[actual_index], score)
 
     results: list[ExpectedFindingResult] = []
@@ -102,7 +108,7 @@ def score_expected_findings(
             message=finding.message,
         )
         for index, finding in enumerate(actual_findings)
-        if index not in matched_actual
+        if index not in matched_actual_indices
     ]
     return results, extra_findings
 

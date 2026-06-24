@@ -1,5 +1,7 @@
 """Full in-memory pipeline orchestration."""
 
+import asyncio
+
 from backend.app.config.settings import get_settings
 from backend.app.db.models import ReferenceDocumentRecord, load_cached_reference_data
 from backend.app.fixtures.sample_documents import (
@@ -92,11 +94,10 @@ async def run_custom_pipeline(
     all_facts = []
     extract_outputs = []
 
-    for reference in request.references:
+    async def process_reference(reference):
         ref_id = reference.resolved_id()
         profile_input = build_reference_profile_input(ref_id, reference)
-
-        profile, extract_output, _ = await run_reference_document_pipeline(
+        return await run_reference_document_pipeline(
             project_id=project_id,
             document_id=ref_id,
             text=reference.text,
@@ -104,6 +105,11 @@ async def run_custom_pipeline(
             profile_input=profile_input,
             llm_client=llm_client,
         )
+
+    reference_results = await asyncio.gather(
+        *(process_reference(reference) for reference in request.references)
+    )
+    for profile, extract_output, _ in reference_results:
         all_profiles.append(profile)
         all_facts.extend(extract_output.facts)
         extract_outputs.append(extract_output)

@@ -276,10 +276,11 @@ def has_reference_coverage_for_claim(
 
 
 def text_anchors_claim_to_fact(claim: TargetClaim, fact: ProjectFact) -> bool:
-    """True when claim text mentions domain terms from a reference fact.
+    """True when claim text mentions domain terms from a reference fact subject.
 
-    Used as a fallback when LLM-produced ``normalized_subject`` strings differ
-    between target and reference extraction passes.
+    Only compares against the fact's subject tokens — not every word in the
+    evidence quote — to avoid spurious matches (e.g. a contractor-onboarding
+    exclusion matching unrelated onboarding requirements).
     """
     quote = claim.location.quote if claim.location else ""
     claim_corpus = " ".join(
@@ -292,9 +293,6 @@ def text_anchors_claim_to_fact(claim: TargetClaim, fact: ProjectFact) -> bool:
     ).lower()
 
     fact_tokens = subject_tokens(fact.normalized_subject) | subject_tokens(fact.subject)
-    for word in re.findall(r"[a-z]{4,}", fact.evidence.quote.lower()):
-        fact_tokens.add(word)
-
     meaningful = fact_tokens - GENERIC_MATCH_TERMS - SUBJECT_STOPWORDS
     if not meaningful:
         return False
@@ -302,6 +300,13 @@ def text_anchors_claim_to_fact(claim: TargetClaim, fact: ProjectFact) -> bool:
     hits = sum(1 for token in meaningful if token in claim_corpus)
     required = 1 if len(meaningful) == 1 else min(2, len(meaningful))
     return hits >= required
+
+
+def exclusion_anchors_claim(claim: TargetClaim, fact: ProjectFact) -> bool:
+    """Stricter anchor for out-of-scope exclusions than general fact matching."""
+    if subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject):
+        return True
+    return text_anchors_claim_to_fact(claim, fact)
 
 
 def find_subject_or_text_matches(
@@ -346,7 +351,7 @@ def find_exclusion_facts(claim: TargetClaim, facts: list[ProjectFact]) -> list[P
             continue
         if subjects_share_meaningful_term(claim.normalized_subject, fact.normalized_subject):
             excluded.append(fact)
-        elif text_anchors_claim_to_fact(claim, fact):
+        elif exclusion_anchors_claim(claim, fact):
             excluded.append(fact)
     return excluded
 
@@ -408,6 +413,30 @@ def mentions_explicit_owner(text: str) -> bool:
 def is_actionable_task(text: str) -> bool:
     lowered = text.lower()
     return any(re.search(rf"\b{re.escape(verb)}\b", lowered) for verb in ACTION_VERBS)
+
+
+def uat_covers_requirement(
+    requirement_subject: str,
+    requirement_id: str | None,
+    requirement_text: str,
+    uat_claims: list[TargetClaim],
+) -> bool:
+    for uat in uat_claims:
+        linked = uat.attributes.linked_requirement_ids if uat.attributes else None
+        if requirement_id and linked and requirement_id.upper() in {
+            item.upper() for item in linked
+        }:
+            return True
+        uat_req_id = uat.attributes.requirement_id if uat.attributes else None
+        if requirement_id and uat_req_id and requirement_id.upper() == uat_req_id.upper():
+            return True
+        if requirement_id and requirement_id.upper() in uat.text.upper():
+            return True
+        if subjects_match(requirement_subject, uat.normalized_subject):
+            return True
+        if requirement_id and requirement_id.upper() in uat.normalized_subject.upper():
+            return True
+    return False
 
 
 def uat_test_has_expected_result(claim: TargetClaim) -> bool:

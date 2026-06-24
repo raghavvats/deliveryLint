@@ -11,11 +11,14 @@ from backend.app.services.lint_engine.finding_copy import (
     uat_missing_result_copy,
     vague_requirement_copy,
 )
+from backend.app.domain.attribute_enrichment import extract_iso_date
+from backend.app.domain.text_signals import has_relative_date_language, is_generic_acceptance_criteria
 from backend.app.services.lint_engine.matching import (
     contains_vague_language,
     is_actionable_task,
     mentions_explicit_owner,
     subjects_match,
+    uat_covers_requirement,
     uat_test_has_expected_result,
 )
 
@@ -33,7 +36,12 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
     # checking every claim type ensures statements like "fast, user-friendly, and
     # seamless" are caught regardless of how the extractor typed them.
     for claim in claims:
-        if claim.checkable and contains_vague_language(claim.text):
+        if not claim.checkable:
+            continue
+        if claim.claim_type == FactType.STAKEHOLDER:
+            continue
+
+        if contains_vague_language(claim.text):
             title, message = vague_requirement_copy(claim)
             findings.append(
                 LintFinding(
@@ -52,13 +60,18 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                 )
             )
 
-        if claim.claim_type == FactType.REQUIREMENT:
+        if claim.claim_type in {FactType.REQUIREMENT, FactType.ACCEPTANCE_CRITERIA}:
+            is_requirement = claim.claim_type == FactType.REQUIREMENT
             has_ac = any(
                 c.claim_type == FactType.ACCEPTANCE_CRITERIA
                 and subjects_match(c.normalized_subject, claim.normalized_subject)
                 for c in claims
             )
-            if not has_ac:
+            generic_ac = (
+                claim.claim_type == FactType.ACCEPTANCE_CRITERIA
+                and is_generic_acceptance_criteria(claim.text)
+            )
+            if (is_requirement and not has_ac) or generic_ac:
                 title, message = missing_ac_copy(claim)
                 findings.append(
                     LintFinding(
@@ -110,9 +123,13 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
                     )
                 )
 
-        if claim.claim_type == FactType.DATE:
+        if claim.claim_type in {FactType.DATE, FactType.MILESTONE, FactType.DEPENDENCY}:
             date_value = claim.attributes.date_value if claim.attributes else None
-            if date_value is None:
+            parsed_date = date_value or extract_iso_date(claim.text)
+            if parsed_date is None and (
+                claim.claim_type == FactType.DATE
+                or has_relative_date_language(claim.text)
+            ):
                 title, message = missing_date_copy(claim)
                 findings.append(
                     LintFinding(
@@ -158,13 +175,14 @@ def run_rubric_quality_rules(context: LintContext) -> list[LintFinding]:
         ]
         uat_claims = [c for c in claims if c.claim_type == FactType.UAT_TEST]
         for req in requirement_facts:
-            covered = any(
-                subjects_match(req.normalized_subject, uat.normalized_subject)
-                for uat in uat_claims
-            )
-            if covered:
-                continue
             req_id = req.attributes.requirement_id if req.attributes else None
+            if uat_covers_requirement(
+                req.normalized_subject,
+                req_id,
+                req.text,
+                uat_claims,
+            ):
+                continue
             title, message = uat_coverage_gap_copy(req.normalized_subject, req_id)
             findings.append(
                 LintFinding(

@@ -25,6 +25,13 @@ _REDUNDANT_WHEN_STRONG = {
 }
 
 
+# Rubric findings that are redundant once a claim has a strong grounding verdict.
+_RUBRIC_REDUNDANT_WHEN_STRONG = {
+    LintFindingType.VAGUE_REQUIREMENT,
+    LintFindingType.UNSUPPORTED_TARGET_CLAIM,
+}
+
+
 def suppress_redundant_findings(findings: list[LintFinding]) -> list[LintFinding]:
     """Drop weak findings for a claim that already has a stronger verdict.
 
@@ -42,6 +49,11 @@ def suppress_redundant_findings(findings: list[LintFinding]) -> list[LintFinding
     for finding in findings:
         if (
             finding.finding_type in _REDUNDANT_WHEN_STRONG
+            and finding.target_claim_id in strongly_flagged_claims
+        ):
+            continue
+        if (
+            finding.finding_type in _RUBRIC_REDUNDANT_WHEN_STRONG
             and finding.target_claim_id in strongly_flagged_claims
         ):
             continue
