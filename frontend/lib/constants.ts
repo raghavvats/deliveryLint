@@ -40,7 +40,6 @@ export const SOURCE_STATUSES = [
 ] as const;
 
 export type TargetDocType = (typeof TARGET_DOC_TYPES)[number]["value"];
-export type AnalysisMode = "sample" | "upload";
 
 export type ReferenceProfileHints = {
   user_provided_doc_type: string;
