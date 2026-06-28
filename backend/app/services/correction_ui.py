@@ -16,10 +16,18 @@ from backend.app.schemas.correction_ui import (
     ReferenceEvidenceView,
 )
 from backend.app.schemas.enums import DocType, LintFindingType, LintSeverity, ReviewPriority
-from backend.app.schemas.lint import LintFinding, RunLintOutput
+from backend.app.schemas.lint import (
+    LintEngineWarning,
+    LintEngineWarningCode,
+    LintFinding,
+    RunLintOutput,
+)
 from backend.app.schemas.project_fact import ProjectFact
 from backend.app.schemas.source_profile import SourceProfile
-from backend.app.schemas.target_parser import TargetParseResult
+from backend.app.schemas.target_parser import (
+    TargetParseResult,
+    TargetParseWarningCode,
+)
 
 PRIORITY_RANK = {
     ReviewPriority.NEEDS_FIX: 0,
@@ -299,12 +307,35 @@ def build_correction_ui_response_from_parts(
         source_profiles, ref_texts, ref_filenames
     )
 
+    warnings = list(lint_output.warnings)
+    warnings.extend(_target_parse_ui_warnings(target_parse_result))
+
     return CorrectionUIResponse(
         project_id=project_id,
         target_document=target_document,
         target_profile=target_parse_result.target_profile,
         reference_documents=reference_documents,
         findings=finding_views,
-        lint_warnings=lint_output.warnings,
+        lint_warnings=warnings,
         summary=summary,
     )
+
+
+def _target_parse_ui_warnings(
+    target_parse_result: TargetParseResult,
+) -> list[LintEngineWarning]:
+    """Forward target-parse warnings that the reviewer needs to see in the UI.
+
+    Currently only document truncation is surfaced here; other parse warnings are
+    already reflected by target quality flags.
+    """
+    forwarded: list[LintEngineWarning] = []
+    for warning in target_parse_result.warnings:
+        if warning.code == TargetParseWarningCode.DOCUMENT_TRUNCATED:
+            forwarded.append(
+                LintEngineWarning(
+                    code=LintEngineWarningCode.DOCUMENT_TRUNCATED,
+                    message=warning.message,
+                )
+            )
+    return forwarded

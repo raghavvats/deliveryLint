@@ -2,6 +2,12 @@
 
 import re
 
+from backend.app.config.party_config import (
+    CLIENT_MARKERS,
+    CLIENT_NAME_TOKENS,
+    VENDOR_MARKERS,
+    VENDOR_NAME_TOKENS,
+)
 from backend.app.schemas.enums import FactCategory, FactPolarity, FactType
 from backend.app.schemas.project_fact import ProjectFact
 from backend.app.schemas.source_profile import SourceProfile
@@ -137,7 +143,9 @@ VAGUE_TERMS = {
 
 # Generic tokens that do not help disambiguate one subject from another.
 # Removing them prevents over-matching on boilerplate words while keeping the
-# domain-specific anchor tokens (e.g. "netsuite", "portal", "uat") intact.
+# domain-specific anchor tokens (e.g. "netsuite", "portal", "uat") intact. Party
+# names (vendor/client) are pulled from party_config so they generalize across
+# engagements rather than being hardcoded here.
 SUBJECT_STOPWORDS = {
     "the",
     "a",
@@ -153,16 +161,16 @@ SUBJECT_STOPWORDS = {
     "by",
     "project",
     "release",
-    "northstar",
     "salesforce",
     "system",
     "systems",
-    "auctor",
     "new",
     "item",
     "items",
     "general",
     "support",
+    *VENDOR_NAME_TOKENS,
+    *CLIENT_NAME_TOKENS,
 }
 
 # Minimum overlap-coefficient (|A ∩ B| / min(|A|, |B|)) required to treat two
@@ -362,12 +370,9 @@ def contains_vague_language(text: str) -> bool:
 
 
 # Owner names / named roles whose presence in a sentence means the owner is
-# explicit, so a "missing owner" finding would be a false positive.
+# explicit, so a "missing owner" finding would be a false positive. The party
+# names/roles come from party_config so this generalizes across engagements.
 EXPLICIT_OWNER_TERMS = {
-    "auctor",
-    "northstar",
-    "client",
-    "vendor",
     "project team",
     "sponsor",
     "engagement manager",
@@ -379,6 +384,8 @@ EXPLICIT_OWNER_TERMS = {
     "sales operations",
     "finance",
     "stakeholder",
+    *VENDOR_MARKERS,
+    *CLIENT_MARKERS,
 }
 
 # Verbs indicating an actionable task (something a party is expected to do).

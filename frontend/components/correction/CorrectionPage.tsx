@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
 
 import { DocumentViewer } from "@/components/correction/DocumentViewer";
 import { FindingNavigator } from "@/components/correction/FindingNavigator";
@@ -205,6 +205,19 @@ export function CorrectionPage({ runId }: CorrectionPageProps) {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-4 pr-[calc(1rem+380px)]">
+        {data.lint_warnings.length > 0 && (
+          <section className="mb-4 space-y-2">
+            {data.lint_warnings.map((warning, index) => (
+              <div
+                key={`${warning.code}-${index}`}
+                className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{warning.message}</span>
+              </div>
+            ))}
+          </section>
+        )}
         <section className="min-h-[65vh]">
           {viewingReference ? (
             <div>

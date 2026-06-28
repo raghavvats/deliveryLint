@@ -26,6 +26,13 @@ from __future__ import annotations
 import re
 from uuid import uuid4
 
+from backend.app.config.party_config import (
+    CLIENT_MARKERS,
+    DOLLAR_INFORMAL_MARKERS,
+    JOINT_MARKERS,
+    THRESHOLD_INFORMAL_MARKERS,
+    VENDOR_MARKERS,
+)
 from backend.app.domain.attribute_enrichment import extract_iso_date
 from backend.app.domain.text_signals import (
     claims_no_open_questions,
@@ -81,10 +88,9 @@ COMMITMENT_CLAIM_TYPES = {
 RESPONSIBILITY_TYPES = {FactType.CLIENT_RESPONSIBILITY, FactType.TEAM_RESPONSIBILITY}
 DATE_FACT_TYPES = {FactType.DATE, FactType.MILESTONE, FactType.DELIVERABLE}
 
-_VENDOR_MARKERS = ("auctor", "vendor")
-_CLIENT_MARKERS = ("client", "northstar", "customer")
+_VENDOR_LOOKAHEAD = "".join(rf"(?!{re.escape(marker)}\b)" for marker in VENDOR_MARKERS)
 _CLIENT_OWNER_RE = re.compile(
-    r"\b(?!auctor\b)(?!vendor\b)[A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){0,2}"
+    rf"\b{_VENDOR_LOOKAHEAD}[A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){{0,2}}"
     r"\s+(?:will|shall|must|owns?|is responsible|coordinates?|provides?|executes?)",
 )
 
@@ -100,11 +106,11 @@ def _normalize_owner(owner: str | None) -> str | None:
     if not owner:
         return None
     lowered = owner.lower()
-    if any(marker in lowered for marker in _VENDOR_MARKERS):
+    if any(marker in lowered for marker in VENDOR_MARKERS):
         return "vendor"
-    if any(marker in lowered for marker in _CLIENT_MARKERS):
+    if any(marker in lowered for marker in CLIENT_MARKERS):
         return "client"
-    if "joint" in lowered or "both" in lowered:
+    if any(marker in lowered for marker in JOINT_MARKERS):
         return "joint"
     # Any other named organization is treated as the client party.
     if lowered.strip():
@@ -115,11 +121,13 @@ def _normalize_owner(owner: str | None) -> str | None:
 def _owner_from_text(text: str) -> str | None:
     """Infer the responsible party from a sentence when no owner attribute exists."""
     lowered = text.lower()
-    has_vendor = any(marker in lowered for marker in _VENDOR_MARKERS)
-    has_client = any(marker in lowered for marker in _CLIENT_MARKERS)
+    has_vendor = any(marker in lowered for marker in VENDOR_MARKERS)
+    has_client = any(marker in lowered for marker in CLIENT_MARKERS)
     if not has_client:
         client_match = _CLIENT_OWNER_RE.search(text)
-        if client_match and "auctor" not in client_match.group(0).lower():
+        if client_match and not any(
+            marker in client_match.group(0).lower() for marker in VENDOR_MARKERS
+        ):
             has_client = True
 
     if has_vendor and not has_client:
@@ -285,10 +293,7 @@ def _find_threshold_authority_mismatch(
         fact_text = f"{fact.text} {fact.evidence.quote}".lower()
         if not any(pct in extract_percentages(fact.text + fact.evidence.quote) for pct in claim_percentages):
             continue
-        if any(
-            marker in fact_text
-            for marker in ("explore", "not to change", "do not change", "pricing", "possible")
-        ):
+        if any(marker in fact_text for marker in THRESHOLD_INFORMAL_MARKERS):
             request_facts.append(fact)
 
     if not request_facts:
@@ -324,10 +329,7 @@ def _find_dollar_authority_mismatch(
         if not (claim_amounts & fact_amounts):
             continue
         fact_text = f"{fact.text} {fact.evidence.quote}".lower()
-        if any(
-            marker in fact_text
-            for marker in ("idea", "no decision", "not approved", "discuss", "possible", "explore")
-        ):
+        if any(marker in fact_text for marker in DOLLAR_INFORMAL_MARKERS):
             request_facts.append(fact)
 
     if not request_facts:

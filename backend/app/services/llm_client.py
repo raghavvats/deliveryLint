@@ -1,6 +1,7 @@
 """LLM client protocol, mock, and provider implementations."""
 
 import json
+import logging
 from typing import Protocol, TypeVar
 
 import httpx
@@ -9,13 +10,48 @@ from pydantic import BaseModel, ValidationError
 from backend.app.config.fact_extraction_config import FactExtractionConfig
 from backend.app.config.settings import get_settings
 from backend.app.config.target_document_config import TargetDocumentConfig
-from backend.app.schemas.fact_parser import ExtractProjectFactsInput, ProjectFactLLMResponse
+from backend.app.schemas.fact_parser import (
+    ExtractProjectFactsInput,
+    FactExtractionWarning,
+    FactExtractionWarningCode,
+    ProjectFactLLMResponse,
+)
 from backend.app.schemas.enums import DocType, FactCategory
 from backend.app.schemas.source_profile import ProfileSourceArgs, SourceProfileInference
-from backend.app.schemas.target_parser import ParseTargetDocumentInput, TargetDocumentLLMResponse
+from backend.app.schemas.target_parser import (
+    ParseTargetDocumentInput,
+    TargetDocumentLLMResponse,
+    TargetParseWarning,
+    TargetParseWarningCode,
+)
 from backend.app.services.llm_sanitize import coerce_llm_payload
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T", bound=BaseModel)
+
+# Upper bound on document characters sent to the LLM in a single prompt. Text
+# beyond this is dropped from the prompt; callers surface a DOCUMENT_TRUNCATED
+# warning so the omission is visible rather than silent.
+MAX_DOCUMENT_PROMPT_CHARS = 16000
+
+
+def _prepare_document_text(text: str, *, document_id: str) -> tuple[str, bool]:
+    """Clamp document text to the prompt limit, reporting whether it was cut.
+
+    Returns the (possibly truncated) text and a flag indicating truncation so
+    the caller can emit a structured warning to the UI in addition to the log.
+    """
+    if len(text) <= MAX_DOCUMENT_PROMPT_CHARS:
+        return text, False
+    logger.warning(
+        "Document %s truncated from %d to %d characters before LLM analysis; "
+        "content beyond the limit was not analyzed.",
+        document_id,
+        len(text),
+        MAX_DOCUMENT_PROMPT_CHARS,
+    )
+    return text[:MAX_DOCUMENT_PROMPT_CHARS], True
 
 
 class LLMResponseError(Exception):
@@ -180,6 +216,9 @@ class OpenAILLMClient:
                 f"status={args.input.user_provided_status}, "
                 f"recency_date={args.input.user_provided_recency_date}"
             )
+        document_text, _ = _prepare_document_text(
+            args.document.text, document_id=args.document.id
+        )
         prompt = (
             "Classify this reference document. Infer doc type, origin, status, recency, "
             "observed content categories, reliability flags, and a short summary. "
@@ -188,7 +227,7 @@ class OpenAILLMClient:
             f"{[category.value for category in FactCategory]}.\n"
             f"{user_hints}\n\n"
             f"JSON schema:\n{_schema_prompt(SourceProfileInference)}\n\n"
-            f"Document text:\n{args.document.text[:16000]}"
+            f"Document text:\n{document_text}"
         )
         return await self._complete_json(prompt, SourceProfileInference)
 
@@ -197,6 +236,9 @@ class OpenAILLMClient:
         input: ExtractProjectFactsInput,
         config: FactExtractionConfig,
     ) -> ProjectFactLLMResponse:
+        document_text, truncated = _prepare_document_text(
+            input.document.text, document_id=input.document.id
+        )
         prompt = (
             "Extract project facts from this reference document. "
             "Each fact must include evidence.quote copied from the source text.\n"
@@ -217,15 +259,30 @@ class OpenAILLMClient:
             f"Extraction guidance: {config.extraction_guidance}\n"
             f"Status guidance: {config.status_guidance}\n\n"
             f"JSON schema:\n{_schema_prompt(ProjectFactLLMResponse)}\n\n"
-            f"Document text:\n{input.document.text[:16000]}"
+            f"Document text:\n{document_text}"
         )
-        return await self._complete_json(prompt, ProjectFactLLMResponse)
+        response = await self._complete_json(prompt, ProjectFactLLMResponse)
+        if truncated:
+            response.warnings.append(
+                FactExtractionWarning(
+                    code=FactExtractionWarningCode.DOCUMENT_TRUNCATED,
+                    message=(
+                        f"Document was truncated to the first {MAX_DOCUMENT_PROMPT_CHARS} "
+                        "characters before fact extraction; facts past that point were "
+                        "not analyzed."
+                    ),
+                )
+            )
+        return response
 
     async def infer_target_parse(
         self,
         input: ParseTargetDocumentInput,
         config: TargetDocumentConfig,
     ) -> TargetDocumentLLMResponse:
+        document_text, truncated = _prepare_document_text(
+            input.document.text, document_id=input.document.id
+        )
         prompt = (
             "Parse this target document into sections and checkable claims. "
             "Each checkable claim must include location.quote copied from the target text.\n"
@@ -246,6 +303,18 @@ class OpenAILLMClient:
             f"Parsing guidance: {config.parsing_guidance}\n"
             f"Rubric guidance: {config.rubric_guidance}\n\n"
             f"JSON schema:\n{_schema_prompt(TargetDocumentLLMResponse)}\n\n"
-            f"Document text:\n{input.document.text[:16000]}"
+            f"Document text:\n{document_text}"
         )
-        return await self._complete_json(prompt, TargetDocumentLLMResponse)
+        response = await self._complete_json(prompt, TargetDocumentLLMResponse)
+        if truncated:
+            response.warnings.append(
+                TargetParseWarning(
+                    code=TargetParseWarningCode.DOCUMENT_TRUNCATED,
+                    message=(
+                        f"Document was truncated to the first {MAX_DOCUMENT_PROMPT_CHARS} "
+                        "characters before parsing; claims past that point were not "
+                        "analyzed."
+                    ),
+                )
+            )
+        return response
